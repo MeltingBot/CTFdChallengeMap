@@ -44,6 +44,40 @@ const D3_CONFIG = {
 };
 
 /**
+ * Clear all D3 data and stop simulation
+ */
+function clearD3Visualization() {
+    try {
+        console.log('🧹 Clearing D3 visualization...');
+        
+        // Stop simulation
+        if (d3Data.simulation) {
+            d3Data.simulation.stop();
+            d3Data.simulation = null;
+        }
+        
+        // Clear data arrays
+        d3Data.nodes = [];
+        d3Data.links = [];
+        
+        // Clear SVG elements
+        if (d3Data.svg) {
+            d3Data.svg.selectAll('*').remove();
+        }
+        
+        // Reset groups
+        d3Data.nodeGroup = null;
+        d3Data.linkGroup = null;
+        d3Data.pathGroup = null;
+        d3Data.zoomContainer = null;
+        
+        console.log('✅ D3 visualization cleared successfully');
+    } catch (error) {
+        console.error('❌ Error clearing D3 visualization:', error);
+    }
+}
+
+/**
  * Initialize D3.js visualization system with robust error handling
  */
 async function initializeD3Visualization() {
@@ -871,9 +905,9 @@ function getChallengeColor(status, challengeId = null) {
             status: '#f59e0b'
         },
         available: {
-            background: 'url(#gradient-available)',
-            border: '#3b82f6',
-            status: '#3b82f6'
+            background: '#f3f4f6',
+            border: '#9ca3af',
+            status: '#9ca3af'
         },
         locked: {
             background: 'url(#gradient-locked)',

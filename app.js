@@ -2983,11 +2983,18 @@ function refreshData() {
 }
 
 function logout() {
+    // Arrêter immédiatement toute connexion
+    isConnected = false;
+    
+    // Nettoyer toutes les variables d'état
     currentUser = { name: null, token: null, ctfdUrl: null, teamName: null, id: null };
     teams = [];
+    window.teams = [];
     teamProgress = {};
+    window.teamProgress = {};
+    challenges = {}; // Réinitialiser les challenges
+    challengeMap = {}; // Réinitialiser la map des challenges
     setSelectedTeams([]);
-    isConnected = false;
     userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
     
     // Vider tous les caches
@@ -2996,9 +3003,80 @@ function logout() {
     teamSubmissionsCache = {};
     loadingTeams.clear();
     
-    // Mettre à jour les références globales du cache
+    // Nettoyer le stockage local/session si nécessaire
+    try {
+        // Ne pas supprimer CTFDMAP_DEBUG mais nettoyer les données de cache potentielles
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('ctfd_') || key.startsWith('challenges_') || key.startsWith('teams_'))) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+        debugLog('LocalStorage nettoyé:', keysToRemove);
+    } catch (error) {
+        debugLog('Erreur nettoyage localStorage:', error);
+    }
+    
+    // Réinitialiser les variables D3 et de vue
+    currentViewMode = 'overview';
+    window.heatmapMode = false;
+    heatmapMode = false;
+    
+    // Nettoyer la visualisation D3
+    try {
+        // Utiliser la fonction de nettoyage dédiée depuis app-d3.js
+        if (typeof clearD3Visualization === 'function') {
+            clearD3Visualization();
+        } else {
+            // Fallback si la fonction n'est pas disponible
+            if (typeof d3Data !== 'undefined') {
+                d3Data.nodes = [];
+                d3Data.links = [];
+                if (d3Data.simulation) {
+                    d3Data.simulation.stop();
+                }
+            }
+            
+            const svg = d3.select('#visualization');
+            if (svg && !svg.empty()) {
+                svg.selectAll('*').remove();
+            }
+        }
+        debugLog('Visualisation D3 nettoyée');
+    } catch (error) {
+        debugLog('Erreur lors du nettoyage D3:', error);
+    }
+    
+    // Nettoyer l'interface utilisateur
+    try {
+        // Vider la liste des équipes
+        const teamsList = document.getElementById('teams-list');
+        if (teamsList) {
+            teamsList.innerHTML = '';
+        }
+        
+        // Réinitialiser les boutons/sections admin
+        const adminSections = document.querySelectorAll('.admin-only');
+        adminSections.forEach(section => section.classList.add('admin-only'));
+        
+        // Cacher les éléments de données
+        document.getElementById('teams-section').style.display = 'block';
+        
+        debugLog('Interface utilisateur nettoyée');
+    } catch (error) {
+        debugLog('Erreur lors du nettoyage UI:', error);
+    }
+    
+    // Mettre à jour les références globales du cache (après nettoyage)
     window.challengeAttemptsCache = challengeAttemptsCache;
     window.teamSubmissionsCache = teamSubmissionsCache;
+    window.teams = teams;
+    window.teamProgress = teamProgress;
+    window.selectedTeams = selectedTeams;
+    
+    debugLog('🧹 Logout complet - toutes les données nettoyées');
     
     document.getElementById('container').style.display = 'none';
     document.getElementById('login-modal').style.display = 'flex';
