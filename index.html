@@ -763,6 +763,46 @@
         .notification-close:hover {
             background: rgba(255,255,255,0.3) !important;
         }
+
+        /* Styles pour les liens de parcours */
+        .team-path {
+            fill: none;
+            stroke-width: 4;
+            stroke-dasharray: 8, 4;
+            opacity: 0.9;
+            pointer-events: none;
+            stroke-linecap: round;
+        }
+
+        .team-path-glow {
+            fill: none;
+            stroke-width: 8;
+            stroke-dasharray: 8, 4;
+            opacity: 0.3;
+            filter: blur(4px);
+            pointer-events: none;
+        }
+
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -12;
+            }
+        }
+
+        .team-path, .team-path-glow {
+            animation: dash 1s linear infinite;
+        }
+
+        /* Arrowhead for path direction */
+        .path-arrow {
+            fill: currentColor;
+            opacity: 0.8;
+        }
+
+        #parcours-btn.active {
+            background: #22c55e !important;
+            color: white;
+        }
     </style>
 </head>
 <body>

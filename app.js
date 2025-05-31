@@ -2,11 +2,66 @@
 let currentUser = { name: null, token: null, ctfdUrl: null, permissions: null, teamName: null, id: null };
 let challenges = {};
 let teams = [];
+window.teams = [];
 let teamProgress = {};
+window.teamProgress = {};
 let selectedTeams = [];
+window.selectedTeams = [];
 let currentViewMode = 'overview';
 let isConnected = false;
 let userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
+
+/**
+ * Generate distinct colors for teams using golden ratio distribution
+ * This ensures maximum visual separation between team colors
+ */
+function generateDistinctTeamColors(count) {
+    const colors = [];
+    const goldenRatio = 0.618033988749895;
+    let hue = Math.random(); // Start with random hue
+    
+    // Predefined highly distinct colors for small number of teams
+    const predefinedColors = [
+        '#ef4444', // Red
+        '#10b981', // Green  
+        '#3b82f6', // Blue
+        '#f59e0b', // Orange
+        '#8b5cf6', // Purple
+        '#06b6d4', // Cyan
+        '#84cc16', // Lime
+        '#f97316', // Dark Orange
+        '#ec4899', // Pink
+        '#14b8a6', // Teal
+        '#a855f7', // Violet
+        '#f43f5e', // Rose
+        '#22c55e', // Emerald
+        '#6366f1', // Indigo
+        '#eab308', // Yellow
+        '#dc2626'  // Dark Red
+    ];
+    
+    // Use predefined colors for small counts
+    if (count <= predefinedColors.length) {
+        return predefinedColors.slice(0, count);
+    }
+    
+    // For larger counts, use golden ratio distribution
+    for (let i = 0; i < count; i++) {
+        // Use golden ratio to distribute hues evenly
+        hue = (hue + goldenRatio) % 1;
+        
+        // Vary saturation and lightness for better distinction
+        const saturation = 65 + (i % 3) * 10; // 65%, 75%, 85%
+        const lightness = 45 + (i % 2) * 10;  // 45%, 55%
+        
+        colors.push(`hsl(${Math.floor(hue * 360)}, ${saturation}%, ${lightness}%)`);
+    }
+    
+    return colors;
+}
+
+// Make the function available globally for other modules
+window.generateDistinctTeamColors = generateDistinctTeamColors;
 
 // Challenge solve times modal
 let currentChallengeModal = null;
@@ -27,6 +82,7 @@ window.challengeAttemptsCache = challengeAttemptsCache;
 let teamSubmissionsCache = {};
 window.teamSubmissionsCache = teamSubmissionsCache;
 
+
 // Team sorting
 let teamSortMode = 'score'; // 'score' or 'name'
 let showOnlySelected = false; // Toggle pour n'afficher que les équipes sélectionnées
@@ -36,8 +92,35 @@ let isDraggingChallenge = false;
 let draggedChallengeId = null;
 let customPositions = {}; // Store custom positions
 
+// Parcours mode
+let parcoursMode = false;
+window.parcoursMode = false;
+
 // Debug mode for dependency troubleshooting
 let debugMode = true; // Set to false to reduce console noise
+
+// Helper to sync selectedTeams with window
+function setSelectedTeams(newTeams) {
+    selectedTeams = newTeams;
+    window.selectedTeams = newTeams;
+    
+    // Update team paths if parcours mode is active
+    if (window.parcoursMode && window.updateTeamPaths) {
+        // Small delay to ensure DOM is updated
+        setTimeout(() => window.updateTeamPaths(), 50);
+    }
+}
+
+// Helper to sync teams with window
+function setTeams(newTeams) {
+    teams = newTeams;
+    window.teams = newTeams;
+}
+
+// Helper to sync teamProgress
+function syncTeamProgress() {
+    window.teamProgress = teamProgress;
+}
 
 // Debug logging helper
 function debugLog(...args) {
@@ -498,6 +581,7 @@ function closeChallengeModal() {
     }
 }
 
+
 // Charger toutes les submissions d'une équipe
 async function loadTeamSubmissions(teamId) {
     if (teamSubmissionsCache[teamId]) {
@@ -727,6 +811,7 @@ async function loadTeamDataLazy(teamName) {
             
             const data = teamProgress[teamName];
             setCachedTeamData(teamName, data);
+            syncTeamProgress();
             
             console.log(`✅ Team ${teamName} solves loaded: ${solves.length} challenges solved`);
             return data;
@@ -735,6 +820,7 @@ async function loadTeamDataLazy(teamName) {
             console.error(`Erreur chargement solves pour ${teamName}:`, error);
             // En cas d'erreur, initialiser avec des données vides
             teamProgress[teamName] = {};
+            syncTeamProgress();
             throw error;
         }
         
@@ -1361,16 +1447,19 @@ async function preloadAllTeams() {
         
         console.log(`📊 ${allTeams.length} équipes trouvées`);
         
+        // Generate distinct colors for all teams
+        const teamColors = generateDistinctTeamColors(allTeams.length);
+        
         // Enrichir avec les infos de base (sans les solves) - en batch pour éviter trop d'appels
-        teams = allTeams.map((team, index) => ({
+        setTeams(allTeams.map((team, index) => ({
             id: team.id,
             name: team.name,
             score: team.score || 0,
             place: team.place || (index + 1),
-            color: `hsl(${(index * 360 / allTeams.length) % 360}, 70%, 50%)`,
+            color: teamColors[index],
             // Les solves seront chargés à la demande
             solvesLoaded: false
-        }));
+        })));
         
         // Trier selon le mode actuel
         if (teamSortMode === 'name') {
@@ -1378,6 +1467,8 @@ async function preloadAllTeams() {
         } else {
             teams.sort((a, b) => b.score - a.score);
         }
+        // Re-sync after sorting
+        window.teams = teams;
         console.log(`✅ ${teams.length} équipes préchargées`);
         
     } catch (error) {
@@ -1392,7 +1483,7 @@ async function loadAdminData() {
         await preloadAllTeams();
         
         // Start with no teams selected for lazy loading
-        selectedTeams = [];
+        setSelectedTeams([]);
         
         // Charger TOUS les challenges (y compris cachés) pour les admins avec view=admin
         try {
@@ -1455,7 +1546,7 @@ async function loadUserData() {
                 name: teamResponse.data.name,
                 color: '#3b82f6'
             }];
-            selectedTeams = [teamResponse.data.name];
+            setSelectedTeams([teamResponse.data.name]);
             currentUser.teamName = teamResponse.data.name;
         }
         
@@ -1527,18 +1618,20 @@ async function loadDemoData(type) {
 }
 
 function generateMockAdminData() {
-    teams = [
-        { name: 'CyberDetectives', color: '#ef4444' },
-        { name: 'InfoHunters', color: '#10b981' },
-        { name: 'DigitalSleuth', color: '#3b82f6' },
-        { name: 'TrackMasters', color: '#f59e0b' },
-        { name: 'DataHounds', color: '#8b5cf6' },
-        { name: 'NetTrackers', color: '#06b6d4' },
-        { name: 'SearchExperts', color: '#84cc16' },
-        { name: 'IntelGatherers', color: '#f97316' }
+    const mockTeams = [
+        'CyberDetectives', 'InfoHunters', 'DigitalSleuth', 'TrackMasters', 
+        'DataHounds', 'NetTrackers', 'SearchExperts', 'IntelGatherers'
     ];
     
-    selectedTeams = []; // Start with no teams selected for lazy loading
+    // Use the distinct color generator for demo teams
+    const teamColors = generateDistinctTeamColors(mockTeams.length);
+    
+    teams = mockTeams.map((name, index) => ({
+        name: name,
+        color: teamColors[index]
+    }));
+    
+    setSelectedTeams([]); // Start with no teams selected for lazy loading
     generateMockProgressData();
     
     // Activer tous les contrôles pour les admins
@@ -1549,7 +1642,7 @@ function generateMockAdminData() {
 
 function generateMockUserData() {
     teams = [{ name: 'Demo Team', color: '#3b82f6' }];
-    selectedTeams = ['Demo Team'];
+    setSelectedTeams(['Demo Team']);
     currentUser.teamName = 'Demo Team';
     generateMockProgressDataForTeam('Demo Team');
     
@@ -1939,7 +2032,7 @@ async function toggleTeam(teamName, checkbox) {
     if (checkbox.checked) {
         // Add team to selection and load its data
         if (!selectedTeams.includes(teamName)) {
-            selectedTeams.push(teamName);
+            setSelectedTeams([...selectedTeams, teamName]);
         }
         
         try {
@@ -1955,13 +2048,13 @@ async function toggleTeam(teamName, checkbox) {
             console.log(`Team ${teamName} added to view`);
         } catch (error) {
             // Remove from selection if loading failed
-            selectedTeams = selectedTeams.filter(t => t !== teamName);
+            setSelectedTeams(selectedTeams.filter(t => t !== teamName));
             checkbox.checked = false;
             console.error(`Failed to load team ${teamName}`);
         }
     } else {
         // Remove team from selection
-        selectedTeams = selectedTeams.filter(t => t !== teamName);
+        setSelectedTeams(selectedTeams.filter(t => t !== teamName));
         updateVisualization();
         console.log(`Team ${teamName} removed from view`);
     }
@@ -1975,7 +2068,7 @@ function selectAllTeams() {
         checkbox.checked = true;
         const teamName = checkbox.parentElement.querySelector('.team-name').textContent;
         if (!selectedTeams.includes(teamName)) {
-            selectedTeams.push(teamName);
+            setSelectedTeams([...selectedTeams, teamName]);
         }
     });
     
@@ -1989,13 +2082,60 @@ function selectAllTeams() {
     });
 }
 
+function setViewMode(mode) {
+    currentViewMode = mode;
+    
+    // Update button states
+    document.querySelectorAll('.control-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Set active button
+    if (mode === 'overview') {
+        document.querySelector('[onclick="setViewMode(\'overview\')"]').classList.add('active');
+    } else if (mode === 'paths') {
+        document.getElementById('paths-btn').classList.add('active');
+    } else if (mode === 'heatmap') {
+        document.getElementById('heatmap-btn').classList.add('active');
+    }
+    
+    // Handle view mode changes
+    if (mode === 'paths') {
+        parcoursMode = true;
+        window.parcoursMode = true;
+        console.log('🛤️ Mode Parcours activé');
+        if (d3SystemReady && window.updateTeamPaths) {
+            window.updateTeamPaths();
+        }
+    } else {
+        parcoursMode = false;
+        window.parcoursMode = false;
+        console.log('🛤️ Mode Parcours désactivé');
+        // Clear paths
+        if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
+            window.d3Data.pathGroup.selectAll('*').remove();
+        }
+    }
+    
+    updateVisualization();
+}
+
+function toggleParcours() {
+    // Legacy function - redirect to setViewMode
+    if (parcoursMode) {
+        setViewMode('overview');
+    } else {
+        setViewMode('paths');
+    }
+}
+
 function deselectAllTeams() {
     const checkboxes = document.querySelectorAll('#team-filters input[type="checkbox"]');
     checkboxes.forEach(checkbox => {
         checkbox.checked = false;
     });
     
-    selectedTeams = [];
+    setSelectedTeams([]);
     updateVisualization();
     console.log('All teams deselected');
 }
@@ -2423,6 +2563,10 @@ function updateVisualization() {
     if (d3SystemReady && window.renderD3Challenges && typeof isD3Ready === 'function' && isD3Ready()) {
         try {
             renderD3Challenges();
+            // Update team paths if parcours mode is active
+            if (parcoursMode && window.updateTeamPaths) {
+                setTimeout(() => window.updateTeamPaths(), 100); // Small delay to ensure nodes are positioned
+            }
         } catch (error) {
             console.error('❌ D3 rendering failed:', error);
             console.log('🔄 Falling back to legacy rendering');
@@ -2610,7 +2754,7 @@ function logout() {
     currentUser = { name: null, token: null, ctfdUrl: null, teamName: null, id: null };
     teams = [];
     teamProgress = {};
-    selectedTeams = [];
+    setSelectedTeams([]);
     isConnected = false;
     userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
     
@@ -3338,13 +3482,13 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
 
 function selectAllTeams() {
     if (!userPermissions.canViewAllTeams) return;
-    selectedTeams = teams.map(t => t.name);
+    setSelectedTeams(teams.map(t => t.name));
     updateVisualization();
 }
 
 function deselectAllTeams() {
     if (!userPermissions.canViewAllTeams) return;
-    selectedTeams = [];
+    setSelectedTeams([]);
     updateVisualization();
 }
 
@@ -3357,7 +3501,7 @@ function selectSingleTeam() {
         return teamScore > bestScore ? team : best;
     }, teams[0]);
     
-    selectedTeams = [bestTeam.name];
+    setSelectedTeams([bestTeam.name]);
     updateVisualization();
 }
 
