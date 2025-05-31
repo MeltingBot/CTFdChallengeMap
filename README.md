@@ -9,7 +9,25 @@ Interface de visualisation interactive pour CTFd qui affiche la progression des 
 2. Ouvrir `index.html` directement dans le navigateur
 3. Activer l'extension uniquement pendant l'utilisation
 
-### Option 2: Proxy Node.js (Recommandé)
+### Option 2a: Proxy Go (Recommandé - plus léger)
+```bash
+# Compiler le proxy
+go build -o ctfd-proxy proxy.go
+
+# Lancer avec l'instance par défaut (demo.ctfd.io)
+./ctfd-proxy
+
+# Ou avec une instance spécifique
+CTFD_URL=https://votre-ctfd.com ./ctfd-proxy
+
+# Ou avec des options
+./ctfd-proxy -ctfd-url=https://votre-ctfd.com -port=8080
+
+# Accéder à l'interface
+http://localhost:3000
+```
+
+### Option 2b: Proxy Node.js (Alternative)
 ```bash
 # Installer les dépendances
 npm install
@@ -85,7 +103,10 @@ Structure du projet:
 ctfdMap/
 ├── index.html             # Interface principale
 ├── app.js                 # Code JavaScript de l'application
-├── proxy-server.js        # Serveur proxy Node.js
+├── app-d3.js              # Module de visualisation D3.js
+├── proxy.go               # Serveur proxy Go (recommandé)
+├── proxy-server.js        # Serveur proxy Node.js (alternative)
+├── Makefile               # Scripts de compilation Go
 ├── package.json           # Dépendances Node.js
 └── README.md              # Documentation
 ```
