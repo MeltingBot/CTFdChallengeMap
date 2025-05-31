@@ -149,7 +149,7 @@ async function loadChallengeSolves(challengeId) {
                     const firstSolve = findFirstSolveForTeam(teamName);
                     if (firstSolve) {
                         relativeTime = solveDate - new Date(firstSolve.date);
-                        relativeTimeStr = formatTimeDiff(relativeTime);
+                        relativeTimeStr = formatTimeDiffDetailed(relativeTime);
                     }
                     
                     const solveData = [{
@@ -171,7 +171,7 @@ async function loadChallengeSolves(challengeId) {
                     const prevChallSolve = findPreviousSolveForTeam(teamName, challengeId, solveDate);
                     if (prevChallSolve) {
                         solveData[0].timeFromPrevChall = solveDate - new Date(prevChallSolve.date);
-                        solveData[0].timeFromPrevChallStr = formatTimeDiff(solveData[0].timeFromPrevChall);
+                        solveData[0].timeFromPrevChallStr = formatTimeDiffDetailed(solveData[0].timeFromPrevChall);
                     }
                     
                     displayChallengeSolves(solveData, challengeId);
@@ -232,7 +232,7 @@ async function loadChallengeSolves(challengeId) {
             let timeDiffStr = '';
             if (index > 0) {
                 timeDiff = teamSolve.date - selectedTeamSolves[index - 1].date;
-                timeDiffStr = formatTimeDiff(timeDiff);
+                timeDiffStr = formatTimeDiffDetailed(timeDiff);
             }
             
             // Calculer le temps depuis le challenge précédent pour cette équipe
@@ -241,7 +241,7 @@ async function loadChallengeSolves(challengeId) {
             const prevChallSolve = findPreviousSolveForTeam(teamSolve.teamName, challengeId, teamSolve.date);
             if (prevChallSolve) {
                 timeFromPrevChall = teamSolve.date - new Date(prevChallSolve.date);
-                timeFromPrevChallStr = formatTimeDiff(timeFromPrevChall);
+                timeFromPrevChallStr = formatTimeDiffDetailed(timeFromPrevChall);
             }
             
             // Calculer le temps relatif depuis le premier solve de l'équipe
@@ -250,7 +250,7 @@ async function loadChallengeSolves(challengeId) {
             const firstSolve = findFirstSolveForTeam(teamSolve.teamName);
             if (firstSolve) {
                 relativeTime = teamSolve.date - new Date(firstSolve.date);
-                relativeTimeStr = formatTimeDiff(relativeTime);
+                relativeTimeStr = formatTimeDiffDetailed(relativeTime);
             }
             
             solvesData.push({
@@ -461,6 +461,22 @@ function formatTimeDiff(ms) {
     if (hours > 0) return `${hours}h ${minutes % 60}m`;
     if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
     return `${seconds}s`;
+}
+
+// Format détaillé pour la modale
+function formatTimeDiffDetailed(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    const parts = [];
+    if (days > 0) parts.push(`${days}j`);
+    if (hours % 24 > 0) parts.push(`${hours % 24}h`);
+    if (minutes % 60 > 0) parts.push(`${minutes % 60}m`);
+    if (seconds % 60 > 0 || parts.length === 0) parts.push(`${seconds % 60}s`);
+    
+    return parts.join(' ');
 }
 
 function formatDate(date) {
