@@ -65,6 +65,36 @@ window.generateDistinctTeamColors = generateDistinctTeamColors;
 window.getChallengeHeatmapColors = getChallengeHeatmapColors;
 
 /**
+ * Show the About modal
+ */
+function showAboutModal() {
+    document.getElementById('about-modal').style.display = 'flex';
+}
+
+/**
+ * Hide the About modal
+ */
+function hideAboutModal() {
+    document.getElementById('about-modal').style.display = 'none';
+}
+
+// Make functions available globally
+window.showAboutModal = showAboutModal;
+window.hideAboutModal = hideAboutModal;
+
+// Close modal when clicking outside
+document.addEventListener('DOMContentLoaded', function() {
+    const aboutModal = document.getElementById('about-modal');
+    if (aboutModal) {
+        aboutModal.addEventListener('click', function(e) {
+            if (e.target === aboutModal) {
+                hideAboutModal();
+            }
+        });
+    }
+});
+
+/**
  * Calculate average solve time for each challenge from selected teams
  * Returns object with challengeId -> average time in milliseconds
  */
