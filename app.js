@@ -1483,6 +1483,8 @@ async function authenticateWithCTFd(ctfdUrl, token) {
             throw new Error('URL CTFd incorrecte');
         } else if (error.status === 'CORS') {
             throw new Error('CORS_POLICY_ERROR');
+        } else if (error.message.includes('TOKEN_AUTH_NOT_SUPPORTED')) {
+            throw new Error('Cette instance CTFd ne supporte pas l\'authentification par token API. Utilisez la connexion par session web.');
         } else {
             throw new Error('Erreur de connexion: ' + error.message);
         }
@@ -1546,6 +1548,10 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
                     errorDetails = errorData.message || JSON.stringify(errorData);
                 } catch (e) {
                     errorDetails = errorText;
+                    // Détecter si la réponse contient une redirection vers login
+                    if (errorText.includes('Redirecting') && errorText.includes('/login?next=')) {
+                        errorDetails = 'TOKEN_AUTH_NOT_SUPPORTED';
+                    }
                 }
             } catch (e) {
                 errorDetails = 'Erreur inconnue';
@@ -1701,8 +1707,18 @@ async function loadAdminData() {
 async function loadUserData() {
     try {
         // Charger seulement les données accessibles à cet utilisateur
-        const userTeamResponse = await callCTFdAPI(`/api/v1/users/${currentUser.id}`);
-        const teamId = userTeamResponse.data.team_id;
+        let userTeamResponse, teamId;
+        try {
+            userTeamResponse = await callCTFdAPI(`/api/v1/users/${currentUser.id}`);
+            teamId = userTeamResponse.data.team_id;
+        } catch (profileError) {
+            console.error('Erreur lors de l\'accès au profil utilisateur:', profileError);
+            if (profileError.message.includes('403') || profileError.message.includes('401')) {
+                showError('L\'API ne permet pas l\'accès aux informations de profil. Permissions insuffisantes.');
+                return;
+            }
+            throw profileError;
+        }
         
         if (teamId) {
             const teamResponse = await callCTFdAPI(`/api/v1/teams/${teamId}`);
