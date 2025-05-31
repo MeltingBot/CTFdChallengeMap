@@ -11,6 +11,16 @@ let currentViewMode = 'overview';
 let isConnected = false;
 let userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
 
+// Configuration de debug
+const DEBUG_ENABLED = new URLSearchParams(window.location.search).get('debug') === 'true' || 
+                     localStorage.getItem('CTFDMAP_DEBUG') === 'true' ||
+                     (typeof process !== 'undefined' && process.env && process.env.CTFDMAP_DEBUG === 'true');
+
+// Fonctions de debug conditionnelles
+const debugLog = (...args) => DEBUG_ENABLED && debugLog(...args);
+const debugWarn = (...args) => DEBUG_ENABLED && debugWarn(...args);
+const debugError = (...args) => console.error(...args); // Les erreurs sont toujours affichées
+
 /**
  * Generate distinct colors for teams using golden ratio distribution
  * This ensures maximum visual separation between team colors
@@ -256,7 +266,6 @@ let heatmapMode = false;
 window.heatmapMode = false;
 
 // Debug mode for dependency troubleshooting
-let debugMode = true; // Set to false to reduce console noise
 
 // Helper to sync selectedTeams with window
 function setSelectedTeams(newTeams) {
@@ -285,25 +294,6 @@ function setTeams(newTeams) {
 // Helper to sync teamProgress
 function syncTeamProgress() {
     window.teamProgress = teamProgress;
-}
-
-// Debug logging helper
-function debugLog(...args) {
-    if (debugMode) {
-        console.log(...args);
-    }
-}
-
-function debugWarn(...args) {
-    if (debugMode) {
-        console.warn(...args);
-    }
-}
-
-function debugError(...args) {
-    if (debugMode) {
-        console.error(...args);
-    }
 }
 
 // ==================== CHALLENGE SOLVES MODAL ====================
@@ -373,7 +363,7 @@ async function showChallengeSolvesModal(challengeId) {
 async function loadChallengeSolves(challengeId) {
     try {
         const challenge = challengeMap[challengeId];
-        console.log('🔍 loadChallengeSolves:', {
+        debugLog('🔍 loadChallengeSolves:', {
             challengeId,
             challenge,
             isAdmin: userPermissions.isAdmin,
@@ -436,7 +426,7 @@ async function loadChallengeSolves(challengeId) {
         const solvesData = [];
         const selectedTeamSolves = [];
         
-        console.log('📊 Mode admin - Recherche des solves pour les équipes sélectionnées');
+        debugLog('📊 Mode admin - Recherche des solves pour les équipes sélectionnées');
         
         // Charger les tentatives pour ce challenge (si disponible)
         let challengeAttempts = {};
@@ -449,7 +439,7 @@ async function loadChallengeSolves(challengeId) {
         
         // Collecter les solves des équipes sélectionnées depuis teamProgress
         for (const teamName of selectedTeams) {
-            console.log(`  Checking team: ${teamName}`, {
+            debugLog(`  Checking team: ${teamName}`, {
                 hasTeamProgress: !!teamProgress[teamName],
                 hasChallengeProgress: !!(teamProgress[teamName] && teamProgress[teamName][challengeId]),
                 challengeData: teamProgress[teamName] ? teamProgress[teamName][challengeId] : null
@@ -463,7 +453,7 @@ async function loadChallengeSolves(challengeId) {
                         solve,
                         date: new Date(solve.date)
                     });
-                    console.log(`    ✅ Team ${teamName} solved this challenge`);
+                    debugLog(`    ✅ Team ${teamName} solved this challenge`);
                 }
             }
         }
@@ -750,12 +740,12 @@ function closeChallengeModal() {
 // Charger toutes les submissions d'une équipe
 async function loadTeamSubmissions(teamId) {
     if (teamSubmissionsCache[teamId]) {
-        console.log(`📦 Submissions depuis cache pour team ${teamId}`);
+        debugLog(`📦 Submissions depuis cache pour team ${teamId}`);
         return teamSubmissionsCache[teamId];
     }
     
     try {
-        console.log(`🔄 Chargement des submissions pour team ${teamId}...`);
+        debugLog(`🔄 Chargement des submissions pour team ${teamId}...`);
         const response = await callCTFdAPI(`/api/v1/teams/${teamId}/fails?per_page=100`);
         
         if (response && response.data) {
@@ -771,11 +761,11 @@ async function loadTeamSubmissions(teamId) {
             });
             
             teamSubmissionsCache[teamId] = submissionsByChallenge;
-            console.log(`✅ Submissions chargées pour team ${teamId}:`, submissionsByChallenge);
+            debugLog(`✅ Submissions chargées pour team ${teamId}:`, submissionsByChallenge);
             return submissionsByChallenge;
         }
     } catch (error) {
-        console.warn(`⚠️ Impossible de charger les submissions pour team ${teamId}:`, error.message);
+        debugWarn(`⚠️ Impossible de charger les submissions pour team ${teamId}:`, error.message);
     }
     
     return {};
@@ -789,7 +779,7 @@ async function loadChallengeAttempts(challengeId) {
     
     // Vérifier le cache d'abord
     if (challengeAttemptsCache[cacheKey]) {
-        console.log('📊 Tentatives depuis cache:', challengeAttemptsCache[cacheKey]);
+        debugLog('📊 Tentatives depuis cache:', challengeAttemptsCache[cacheKey]);
         return challengeAttemptsCache[cacheKey];
     }
     
@@ -816,7 +806,7 @@ async function loadChallengeAttempts(challengeId) {
     // Mettre en cache avec la clé qui inclut les équipes sélectionnées
     challengeAttemptsCache[cacheKey] = attempts;
     
-    console.log('📊 Tentatives générées et mises en cache:', attempts);
+    debugLog('📊 Tentatives générées et mises en cache:', attempts);
     return attempts;
     
     /* Version réelle avec l'API CTFd (à implémenter):
@@ -907,7 +897,7 @@ function clearTeamCache(teamName = null) {
 async function loadTeamDataLazy(teamName) {
     // Check if already loading
     if (loadingTeams.has(teamName)) {
-        console.log(`Team ${teamName} is already being loaded...`);
+        debugLog(`Team ${teamName} is already being loaded...`);
         return;
     }
     
@@ -920,7 +910,7 @@ async function loadTeamDataLazy(teamName) {
     
     // Start loading
     loadingTeams.add(teamName);
-    console.log(`Loading data for team ${teamName}...`);
+    debugLog(`Loading data for team ${teamName}...`);
     
     try {
         debugLog(`🔄 Loading fresh data for team ${teamName}`);
@@ -932,7 +922,7 @@ async function loadTeamDataLazy(teamName) {
             const mockData = teamProgress[teamName];
             setCachedTeamData(teamName, mockData);
             
-            console.log(`Team ${teamName} data loaded successfully`);
+            debugLog(`Team ${teamName} data loaded successfully`);
             return mockData;
         }
         
@@ -978,7 +968,7 @@ async function loadTeamDataLazy(teamName) {
             setCachedTeamData(teamName, data);
             syncTeamProgress();
             
-            console.log(`✅ Team ${teamName} solves loaded: ${solves.length} challenges solved`);
+            debugLog(`✅ Team ${teamName} solves loaded: ${solves.length} challenges solved`);
             return data;
             
         } catch (error) {
@@ -1020,7 +1010,7 @@ function saveCustomPositions() {
 function resetChallengePositions() {
     customPositions = {};
     sessionStorage.removeItem('customChallengePositions');
-    console.log('Challenge positions reset to automatic layout');
+    debugLog('Challenge positions reset to automatic layout');
     
     // Recalculate and redraw
     if (Object.keys(challengeMap).length > 0) {
@@ -1032,7 +1022,7 @@ function resetChallengePositions() {
                 renderD3Challenges();
             } catch (error) {
                 console.error('❌ D3 rendering failed:', error);
-                console.log('🔄 Falling back to legacy rendering');
+                debugLog('🔄 Falling back to legacy rendering');
                 renderChallenges();
                 updateDependencyArrows();
             }
@@ -1115,7 +1105,7 @@ function makeChallengeNodeDraggable(element, challengeId) {
         challengeMap[challengeId].position = { x: finalX, y: finalY };
         
         saveCustomPositions();
-        console.log(`Challenge "${challengeMap[challengeId].name}" position saved`);
+        debugLog(`Challenge "${challengeMap[challengeId].name}" position saved`);
         
         e.preventDefault();
     };
@@ -1161,7 +1151,7 @@ async function callCTFdAPIWithPagination(endpoint, method = 'GET') {
                 if (response.meta && response.meta.pagination) {
                     const pagination = response.meta.pagination;
                     hasMore = pagination.page < pagination.pages;
-                    console.log(`Page ${pagination.page}/${pagination.pages}`);
+                    debugLog(`Page ${pagination.page}/${pagination.pages}`);
                 } else {
                     // Si pas de métadonnées de pagination, on suppose qu'il n'y a qu'une page
                     hasMore = false;
@@ -1178,7 +1168,7 @@ async function callCTFdAPIWithPagination(endpoint, method = 'GET') {
         }
     }
     
-    console.log(`Pagination terminée pour ${endpoint}: ${allData.length} éléments récupérés`);
+    debugLog(`Pagination terminée pour ${endpoint}: ${allData.length} éléments récupérés`);
     return { data: allData };
 }
 
@@ -1202,25 +1192,25 @@ let challengeMap = {
 
 // Fonction pour recalculer les positions des challenges de démo avec logique hiérarchique correcte
 function updateDemoChallengePositions() {
-    console.log('=== RECALCUL DES POSITIONS DÉMO ===');
+    debugLog('=== RECALCUL DES POSITIONS DÉMO ===');
     
     // Calculer les niveaux hiérarchiques avec la nouvelle logique
     const levels = {};
     const visited = new Set();
     
-    console.log('Challenges disponibles:', Object.keys(challengeMap));
+    debugLog('Challenges disponibles:', Object.keys(challengeMap));
     
     Object.keys(challengeMap).forEach(challengeId => {
         visited.clear(); // Reset visited pour chaque calcul de niveau principal
         const level = calculateChallengeLevel(challengeId, challengeMap, levels, visited);
-        console.log(`${challengeMap[challengeId].name}: niveau ${level}`);
+        debugLog(`${challengeMap[challengeId].name}: niveau ${level}`);
     });
     
     // Grouper par niveau
     const levelGroups = {};
     const maxLevel = Math.max(...Object.values(levels), 0);
     
-    console.log(`Niveau maximum calculé: ${maxLevel}`);
+    debugLog(`Niveau maximum calculé: ${maxLevel}`);
     
     // Initialiser les groupes de niveaux
     for (let level = 0; level <= maxLevel; level++) {
@@ -1231,13 +1221,13 @@ function updateDemoChallengePositions() {
     Object.entries(challengeMap).forEach(([challengeId, challenge]) => {
         const level = levels[challengeId] || 0;
         levelGroups[level].push(challengeId);
-        console.log(`${challenge.name} assigné au niveau ${level}`);
+        debugLog(`${challenge.name} assigné au niveau ${level}`);
     });
     
     // Afficher la distribution finale
     for (let level = 0; level <= maxLevel; level++) {
         const challenges = levelGroups[level];
-        console.log(`Niveau ${level}: ${challenges.length} challenges - [${challenges.map(id => challengeMap[id].name).join(', ')}]`);
+        debugLog(`Niveau ${level}: ${challenges.length} challenges - [${challenges.map(id => challengeMap[id].name).join(', ')}]`);
     }
     
     // ✅ CONSISTENT POSITIONING ALGORITHM - MATCHES MAIN ALGORITHM
@@ -1247,7 +1237,7 @@ function updateDemoChallengePositions() {
     const START_Y = 60;        // Level 0 at TOP
     const MIN_SPACING = 180;
     
-    console.log('=== ✅ DEMO POSITIONING - TOP-DOWN HIERARCHY ===');
+    debugLog('=== ✅ DEMO POSITIONING - TOP-DOWN HIERARCHY ===');
     
     for (let level = 0; level <= maxLevel; level++) {
         const challenges = levelGroups[level];
@@ -1274,7 +1264,7 @@ function updateDemoChallengePositions() {
         }
         
         const levelType = level === 0 ? 'ROOT' : `LEVEL-${level}`;
-        console.log(`📍 ${levelType} ${level}: ${challenges.length} challenges at Y=${y}, startX=${startX}, spacing=${spacing || 'N/A'}`);
+        debugLog(`📍 ${levelType} ${level}: ${challenges.length} challenges at Y=${y}, startX=${startX}, spacing=${spacing || 'N/A'}`);
         
         // Position each challenge
         challenges.forEach((challengeId, index) => {
@@ -1285,16 +1275,16 @@ function updateDemoChallengePositions() {
                 y: y
             };
             
-            console.log(`  ✅ ${challengeMap[challengeId].name}: (${challengeMap[challengeId].position.x}, ${challengeMap[challengeId].position.y})`);
+            debugLog(`  ✅ ${challengeMap[challengeId].name}: (${challengeMap[challengeId].position.x}, ${challengeMap[challengeId].position.y})`);
         });
     }
     
-    console.log('✓ Positions des challenges de démo mises à jour');
-    console.log('Niveaux finaux:', levels);
+    debugLog('✓ Positions des challenges de démo mises à jour');
+    debugLog('Niveaux finaux:', levels);
     
     // Vérification finale
     Object.entries(challengeMap).forEach(([id, challenge]) => {
-        console.log(`${challenge.name}: Niveau ${levels[id]}, Position (${challenge.position.x}, ${challenge.position.y}), Dépendances: [${challenge.dependencies.join(', ')}]`);
+        debugLog(`${challenge.name}: Niveau ${levels[id]}, Position (${challenge.position.x}, ${challenge.position.y}), Dépendances: [${challenge.dependencies.join(', ')}]`);
     });
 }
 
@@ -1329,7 +1319,7 @@ function showCORSInstructions() {
    • Utilisez l'interface CTFd directement
    • Ou développez un backend intermédiaire`;
     
-    console.log(instructions);
+    debugLog(instructions);
 }
 
 function showError(message) {
@@ -1384,18 +1374,32 @@ async function connectToAPI() {
     showLoginLoader('Connexion en cours...');
     
     if (!ctfdUrl) {
-        console.warn('Veuillez saisir l\'URL CTFd');
+        debugWarn('Veuillez saisir l\'URL CTFd');
         hideLoginLoader();
         return;
     }
 
     if (!token) {
-        console.warn('Veuillez saisir votre token API CTFd');
+        debugWarn('Veuillez saisir votre token API CTFd');
         hideLoginLoader();
         return;
     }
 
     updateAPIStatus('loading', 'Vérification du token...');
+    
+    // Si on utilise le proxy local, informer de la nouvelle URL
+    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
+        try {
+            await fetch('/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ctfdUrl: ctfdUrl })
+            });
+            debugLog('URL proxy mise à jour:', ctfdUrl);
+        } catch (configError) {
+            debugWarn('Impossible de mettre à jour l\'URL du proxy:', configError);
+        }
+    }
     
     try {
         await authenticateWithCTFd(ctfdUrl, token);
@@ -1443,7 +1447,7 @@ async function authenticateWithCTFd(ctfdUrl, token) {
         // 3. Vérifier l'état du CTF
         try {
             const configResponse = await callCTFdAPI('/api/v1/configs');
-            console.log('Configuration CTFd:', configResponse.data);
+            debugLog('Configuration CTFd:', configResponse.data);
             
             // Vérifier si le CTF est en mode setup ou fini
             const ctfName = configResponse.data?.ctf_name || 'CTF';
@@ -1466,7 +1470,7 @@ async function authenticateWithCTFd(ctfdUrl, token) {
                 }
             }
         } catch (e) {
-            console.log('Impossible de récupérer la config CTFd:', e);
+            debugLog('Impossible de récupérer la config CTFd:', e);
         }
         
         // 4. Charger les données selon les permissions
@@ -1494,21 +1498,25 @@ async function authenticateWithCTFd(ctfdUrl, token) {
 async function callCTFdAPI(endpoint, method = 'GET', data = null) {
     // Si on utilise le proxy local, modifier l'URL
     let url;
-    console.log('🔍 DEBUG PROXY:', {
+    debugLog('🔍 DEBUG PROXY:', {
         hostname: window.location.hostname,
         port: window.location.port,
         href: window.location.href,
         isLocalhost: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1',
-        isPort3000: window.location.port === '3000'
+        isPort3000: window.location.port === '3000',
+        currentCtfdUrl: currentUser.ctfdUrl
     });
     
-    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
-        // Utilisation du proxy local - endpoint contient déjà /api/v1/...
-        console.log('✅ Using PROXY for endpoint:', endpoint);
+    // Vérifier si on doit utiliser le proxy ou un appel direct
+    const isLocalProxy = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000';
+    
+    if (isLocalProxy) {
+        // Utiliser le proxy (qui est maintenant dynamique)
+        debugLog('✅ Using PROXY for endpoint:', endpoint);
         url = endpoint;
     } else {
-        // Appel direct
-        console.log('❌ Using DIRECT call to:', currentUser.ctfdUrl);
+        // Appel direct (avec risque CORS)
+        debugLog('❌ Using DIRECT call to:', currentUser.ctfdUrl);
         url = `${currentUser.ctfdUrl}${endpoint}`;
     }
     
@@ -1522,8 +1530,8 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
         credentials: 'omit' // Ne pas envoyer de cookies
     };
     
-    console.log('🌐 API CALL:', url, 'avec token:', currentUser.token ? 'Oui' : 'Non');
-    console.log('📋 Request details:', {
+    debugLog('🌐 API CALL:', url, 'avec token:', currentUser.token ? 'Oui' : 'Non');
+    debugLog('📋 Request details:', {
         method: method,
         headers: options.headers,
         hasBody: !!options.body
@@ -1563,7 +1571,7 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
         }
         
         const data = await response.json();
-        console.log('📦 API RESPONSE:', {
+        debugLog('📦 API RESPONSE:', {
             endpoint: endpoint,
             status: response.status,
             ok: response.ok,
@@ -1571,7 +1579,7 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
             hasData: !!data.data,
             dataLength: Array.isArray(data.data) ? data.data.length : 'N/A'
         });
-        console.log('📄 Full response data:', data);
+        debugLog('📄 Full response data:', data);
         return data;
     } catch (error) {
         // Gestion spécifique de l'erreur CORS
@@ -1594,7 +1602,7 @@ async function loadDataBasedOnPermissions() {
 
 async function preloadAllTeams() {
     try {
-        console.log('🏁 Préchargement de toutes les équipes...');
+        debugLog('🏁 Préchargement de toutes les équipes...');
         showLoginLoader('Chargement des équipes...');
         let allTeams = [];
         let page = 1;
@@ -1616,7 +1624,7 @@ async function preloadAllTeams() {
             }
         }
         
-        console.log(`📊 ${allTeams.length} équipes trouvées`);
+        debugLog(`📊 ${allTeams.length} équipes trouvées`);
         
         // Generate distinct colors for all teams
         const teamColors = generateDistinctTeamColors(allTeams.length);
@@ -1640,7 +1648,7 @@ async function preloadAllTeams() {
         }
         // Re-sync after sorting
         window.teams = teams;
-        console.log(`✅ ${teams.length} équipes préchargées`);
+        debugLog(`✅ ${teams.length} équipes préchargées`);
         
     } catch (error) {
         console.error('Erreur préchargement équipes:', error);
@@ -1660,7 +1668,7 @@ async function loadAdminData() {
         try {
             const challengesResponse = await callCTFdAPI('/api/v1/challenges?view=admin');
             challenges = challengesResponse.data || [];
-            console.log('Challenges chargés (admin avec view=admin):', challenges.length);
+            debugLog('Challenges chargés (admin avec view=admin):', challenges.length);
             
             // Compter les challenges par état
             const challengesByState = {};
@@ -1668,10 +1676,10 @@ async function loadAdminData() {
                 const state = c.state || 'visible';
                 challengesByState[state] = (challengesByState[state] || 0) + 1;
             });
-            console.log('Challenges par état:', challengesByState);
+            debugLog('Challenges par état:', challengesByState);
             
             if (challenges.length === 0) {
-                console.warn('Aucun challenge trouvé, même avec view=admin.');
+                debugWarn('Aucun challenge trouvé, même avec view=admin.');
                 showError('Aucun challenge dans CTFd. Créez des challenges dans l\'interface d\'administration.');
             }
         } catch (challengeError) {
@@ -1689,7 +1697,7 @@ async function loadAdminData() {
         await buildChallengeMapFromCTFd(challenges);
         
         // Ne plus charger les solves au démarrage - ils seront chargés à la demande
-        console.log('✅ Challenges et équipes chargés. Les solves seront chargés à la demande.');
+        debugLog('✅ Challenges et équipes chargés. Les solves seront chargés à la demande.');
         
         // Activer tous les contrôles pour les admins
         document.getElementById('teams-section').classList.remove('admin-only');
@@ -1735,14 +1743,14 @@ async function loadUserData() {
         try {
             const challengesResponse = await callCTFdAPI('/api/v1/challenges');
             challenges = challengesResponse.data || [];
-            console.log('Challenges chargés (user standard):', challenges.length);
+            debugLog('Challenges chargés (user standard):', challenges.length);
             
             if (challenges.length === 0) {
-                console.warn('Aucun challenge visible pour cet utilisateur.');
+                debugWarn('Aucun challenge visible pour cet utilisateur.');
                 showError('Aucun challenge disponible. Le CTF n\'a peut-être pas encore commencé.');
                 
                 // Pour les utilisateurs, garder les données de démo si aucun challenge
-                console.log('Utilisation des données de démo pour l\'utilisateur');
+                debugLog('Utilisation des données de démo pour l\'utilisateur');
             }
         } catch (challengeError) {
             console.error('Erreur lors du chargement des challenges:', challengeError);
@@ -2045,7 +2053,7 @@ async function showMainInterface() {
 
 async function initializeInterface() {
     // Initialize D3.js system now that container is visible
-    console.log('🔍 Checking D3 availability:', {
+    debugLog('🔍 Checking D3 availability:', {
         d3SystemReady,
         hasInitializeD3: typeof window.initializeD3Visualization !== 'undefined',
         d3LibraryLoaded: typeof d3 !== 'undefined'
@@ -2053,11 +2061,11 @@ async function initializeInterface() {
     
     if (!d3SystemReady && window.initializeD3Visualization) {
         try {
-            console.log('🎨 Initializing D3.js system after login...');
+            debugLog('🎨 Initializing D3.js system after login...');
             const d3Initialized = await window.initializeD3Visualization();
             if (d3Initialized) {
                 d3SystemReady = true;
-                console.log('✅ D3.js visualization system ready');
+                debugLog('✅ D3.js visualization system ready');
             }
         } catch (error) {
             console.error('❌ D3.js post-login initialization failed:', error);
@@ -2070,18 +2078,18 @@ async function initializeInterface() {
     // Use D3 rendering if available and ready, fallback to legacy system
     if (d3SystemReady && window.renderD3Challenges && typeof isD3Ready === 'function' && isD3Ready()) {
         try {
-            console.log('🔄 Rendering challenges with D3.js...');
+            debugLog('🔄 Rendering challenges with D3.js...');
             await renderD3Challenges();
-            console.log('✅ Using D3.js rendering system');
+            debugLog('✅ Using D3.js rendering system');
         } catch (error) {
             console.error('❌ D3 rendering failed in initializeInterface:', error);
-            console.log('🔄 Falling back to legacy rendering system');
+            debugLog('🔄 Falling back to legacy rendering system');
             renderChallenges();
             drawDependencies();
             updateTransform(); // Ensure SVG follows challenge container
         }
     } else {
-        console.log('⚠️ Using legacy rendering system');
+        debugLog('⚠️ Using legacy rendering system');
         renderChallenges();
         drawDependencies();
         updateTransform(); // Ensure SVG follows challenge container
@@ -2226,7 +2234,7 @@ async function toggleTeam(teamName, checkbox) {
             }
             
             updateVisualization();
-            console.log(`Team ${teamName} added to view`);
+            debugLog(`Team ${teamName} added to view`);
         } catch (error) {
             // Remove from selection if loading failed
             setSelectedTeams(selectedTeams.filter(t => t !== teamName));
@@ -2237,7 +2245,7 @@ async function toggleTeam(teamName, checkbox) {
         // Remove team from selection
         setSelectedTeams(selectedTeams.filter(t => t !== teamName));
         updateVisualization();
-        console.log(`Team ${teamName} removed from view`);
+        debugLog(`Team ${teamName} removed from view`);
     }
 }
 
@@ -2257,9 +2265,9 @@ function selectAllTeams() {
     const loadingPromises = teams.map(team => loadTeamDataLazy(team.name));
     Promise.all(loadingPromises).then(() => {
         updateVisualization();
-        console.log(`All ${teams.length} teams loaded`);
+        debugLog(`All ${teams.length} teams loaded`);
     }).catch(() => {
-        console.warn('Some teams failed to load');
+        debugWarn('Some teams failed to load');
     });
 }
 
@@ -2286,7 +2294,7 @@ function setViewMode(mode) {
         window.parcoursMode = true;
         heatmapMode = false;
         window.heatmapMode = false;
-        console.log('🛤️ Mode Parcours activé');
+        debugLog('🛤️ Mode Parcours activé');
         if (d3SystemReady && window.updateTeamPaths) {
             window.updateTeamPaths();
         }
@@ -2297,7 +2305,7 @@ function setViewMode(mode) {
         window.heatmapMode = true;
         parcoursMode = false;
         window.parcoursMode = false;
-        console.log('🔥 Mode Heatmap activé');
+        debugLog('🔥 Mode Heatmap activé');
         // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
             window.d3Data.pathGroup.selectAll('*').remove();
@@ -2309,7 +2317,7 @@ function setViewMode(mode) {
         window.parcoursMode = false;
         heatmapMode = false;
         window.heatmapMode = false;
-        console.log('🗂️ Mode Overview activé');
+        debugLog('🗂️ Mode Overview activé');
         // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
             window.d3Data.pathGroup.selectAll('*').remove();
@@ -2338,14 +2346,14 @@ function deselectAllTeams() {
     
     setSelectedTeams([]);
     updateVisualization();
-    console.log('All teams deselected');
+    debugLog('All teams deselected');
 }
 
 function selectSingleTeam() {
     // Prompt user to select which team
     const teamNames = teams.map(t => t.name);
     if (teamNames.length === 0) {
-        console.warn('No teams available');
+        debugWarn('No teams available');
         return;
     }
     
@@ -2369,12 +2377,12 @@ function selectSingleTeam() {
 }
 
 function generateChallengeMap() {
-    console.log('=== GÉNÉRATION DE LA CARTE ===');
-    console.log('ChallengeMap entries:', Object.keys(challengeMap).length);
+    debugLog('=== GÉNÉRATION DE LA CARTE ===');
+    debugLog('ChallengeMap entries:', Object.keys(challengeMap).length);
     
     // Skip DOM manipulation if using D3 system
     if (d3SystemReady) {
-        console.log('📊 Using D3 system, skipping legacy DOM generation');
+        debugLog('📊 Using D3 system, skipping legacy DOM generation');
         return;
     }
     
@@ -2404,7 +2412,7 @@ function generateChallengeMap() {
     
     // DEBUG: Afficher la structure actuelle
     Object.entries(challengeMap).forEach(([id, info]) => {
-        console.log(`${id}: ${info.name} at (${info.position.x}, ${info.position.y}) - deps: [${info.dependencies.join(', ')}]`);
+        debugLog(`${id}: ${info.name} at (${info.position.x}, ${info.position.y}) - deps: [${info.dependencies.join(', ')}]`);
     });
 
     Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
@@ -2422,7 +2430,7 @@ function generateChallengeMap() {
         node.setAttribute('data-challenge', challengeId);
         
         // DEBUG: Afficher les positions lors de la création
-        console.log(`Creating node ${challengeInfo.name}: left=${challengeInfo.position.x}px, top=${challengeInfo.position.y}px`);
+        debugLog(`Creating node ${challengeInfo.name}: left=${challengeInfo.position.x}px, top=${challengeInfo.position.y}px`);
         
         const state = getChallengeOverallState(challengeId);
         node.classList.add(`challenge-${state}`);
@@ -2481,8 +2489,8 @@ function generateChallengeMap() {
         container.appendChild(node);
     });
     
-    console.log('=== NODES CRÉÉS ===');
-    console.log('Nombre de nodes dans le container:', container.children.length);
+    debugLog('=== NODES CRÉÉS ===');
+    debugLog('Nombre de nodes dans le container:', container.children.length);
 }
 
 function drawDependencies() {
@@ -2499,11 +2507,11 @@ function drawDependencies() {
         svg.appendChild(existingMarker);
     }
     
-    console.log('🎯 Drawing dependency arrows...');
+    debugLog('🎯 Drawing dependency arrows...');
     
     // 🔧 STEP 1: Calculate required SVG viewport based on challenge positions
     const viewport = calculateSVGViewport();
-    console.log('📐 SVG Viewport calculated:', viewport);
+    debugLog('📐 SVG Viewport calculated:', viewport);
     
     // 🔧 STEP 2: Set proper SVG dimensions and viewBox
     svg.setAttribute('width', viewport.width);
@@ -2511,8 +2519,8 @@ function drawDependencies() {
     svg.setAttribute('viewBox', `0 0 ${viewport.width} ${viewport.height}`);
     
     // 🔧 STEP 3: Add debugging info
-    console.log(`🎯 SVG configured: ${viewport.width}×${viewport.height} viewport`);
-    console.log(`📊 Challenge coordinate range: (${viewport.minX}-${viewport.maxX}, ${viewport.minY}-${viewport.maxY})`);
+    debugLog(`🎯 SVG configured: ${viewport.width}×${viewport.height} viewport`);
+    debugLog(`📊 Challenge coordinate range: (${viewport.minX}-${viewport.maxX}, ${viewport.minY}-${viewport.maxY})`);
     
     let arrowCount = 0;
     const arrowCoords = []; // For debugging
@@ -2527,7 +2535,7 @@ function drawDependencies() {
             // Find dependency challenge (handle both string and number IDs)
             const depChallenge = challengeMap[String(depId)] || challengeMap[Number(depId)];
             if (!depChallenge) {
-                console.warn(`Dependency ${depId} not found for challenge ${challengeInfo.name}`);
+                debugWarn(`Dependency ${depId} not found for challenge ${challengeInfo.name}`);
                 return;
             }
             
@@ -2592,16 +2600,16 @@ function drawDependencies() {
     // 🔧 STEP 5: Debug arrow visibility
     const clippedArrows = arrowCoords.filter(arrow => !arrow.inViewport);
     if (clippedArrows.length > 0) {
-        console.warn(`⚠️ ${clippedArrows.length} arrows may be clipped:`);
+        debugWarn(`⚠️ ${clippedArrows.length} arrows may be clipped:`);
         clippedArrows.forEach(arrow => {
-            console.warn(`  ${arrow.from} → ${arrow.to}: (${arrow.coords.startX},${arrow.coords.startY})→(${arrow.coords.endX},${arrow.coords.endY})`);
+            debugWarn(`  ${arrow.from} → ${arrow.to}: (${arrow.coords.startX},${arrow.coords.startY})→(${arrow.coords.endX},${arrow.coords.endY})`);
         });
     }
     
-    console.log(`✅ Created ${arrowCount} dependency arrows in ${viewport.width}×${viewport.height} viewport`);
-    console.log(`📊 Arrow visibility: ${arrowCount - clippedArrows.length}/${arrowCount} visible, ${clippedArrows.length} potentially clipped`);
+    debugLog(`✅ Created ${arrowCount} dependency arrows in ${viewport.width}×${viewport.height} viewport`);
+    debugLog(`📊 Arrow visibility: ${arrowCount - clippedArrows.length}/${arrowCount} visible, ${clippedArrows.length} potentially clipped`);
     
-    // 🎯 FINAL DEBUG INFO\n    console.log(`\ud83d\udd0d SVG Debug Summary:`);\n    console.log(`  📐 SVG Dimensions: ${svg.getAttribute('width')}×${svg.getAttribute('height')}`);\n    console.log(`  📊 ViewBox: ${svg.getAttribute('viewBox')}`);\n    console.log(`  🗺️ Challenge Range: (${viewport.minX}-${viewport.maxX}, ${viewport.minY}-${viewport.maxY})`);\n    console.log(`  🎯 Total Challenges: ${Object.keys(challengeMap).length}`);\n    console.log(`  ➡️ Total Arrows: ${arrowCount}`);\n    \n    // Ensure SVG transform is synchronized with challenge container
+    // 🎯 FINAL DEBUG INFO\n    debugLog(`\ud83d\udd0d SVG Debug Summary:`);\n    debugLog(`  📐 SVG Dimensions: ${svg.getAttribute('width')}×${svg.getAttribute('height')}`);\n    debugLog(`  📊 ViewBox: ${svg.getAttribute('viewBox')}`);\n    debugLog(`  🗺️ Challenge Range: (${viewport.minX}-${viewport.maxX}, ${viewport.minY}-${viewport.maxY})`);\n    debugLog(`  🎯 Total Challenges: ${Object.keys(challengeMap).length}`);\n    debugLog(`  ➡️ Total Arrows: ${arrowCount}`);\n    \n    // Ensure SVG transform is synchronized with challenge container
     updateTransform();
 }
 
@@ -2770,7 +2778,7 @@ function updateVisualization() {
             }
         } catch (error) {
             console.error('❌ D3 rendering failed:', error);
-            console.log('🔄 Falling back to legacy rendering');
+            debugLog('🔄 Falling back to legacy rendering');
             drawDependencies();
             updateTransform(); // Ensure SVG follows challenge container
         }
@@ -2887,9 +2895,9 @@ function useCORSProxy() {
     const currentUrl = document.getElementById('ctfd-url').value.trim();
     if (currentUrl && !currentUrl.startsWith('https://cors-anywhere.herokuapp.com/')) {
         document.getElementById('ctfd-url').value = 'https://cors-anywhere.herokuapp.com/' + currentUrl;
-        console.log('URL modifiée pour utiliser le proxy CORS. Cliquez sur "Se connecter" pour réessayer.');
+        debugLog('URL modifiée pour utiliser le proxy CORS. Cliquez sur "Se connecter" pour réessayer.');
     } else {
-        console.warn('Ajoutez d\'abord une URL CTFd valide.');
+        debugWarn('Ajoutez d\'abord une URL CTFd valide.');
     }
 }
 
@@ -2924,7 +2932,7 @@ function showQuickSetup() {
 
 🚀 Conseil : Commencez par l'Option 1 !`;
     
-    console.log(instructions);
+    debugLog(instructions);
 }
 
 
@@ -2959,12 +2967,21 @@ function logout() {
     isConnected = false;
     userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
     
+    // Vider tous les caches
+    teamDataCache = {};
+    challengeAttemptsCache = {};
+    teamSubmissionsCache = {};
+    loadingTeams.clear();
+    
+    // Mettre à jour les références globales du cache
+    window.challengeAttemptsCache = challengeAttemptsCache;
+    window.teamSubmissionsCache = teamSubmissionsCache;
+    
     document.getElementById('container').style.display = 'none';
     document.getElementById('login-modal').style.display = 'flex';
     updateAPIStatus('disconnected', 'Déconnecté');
     
-    // Reset form
-    document.getElementById('ctfd-url').value = 'https://demo.ctfd.io';
+    // Reset form - garder l'URL saisie par l'utilisateur
     document.getElementById('api-token').value = '';
 }
 
@@ -2979,17 +2996,17 @@ function calculateChallengeLevel(challengeId, challengeMap, levels = {}, visited
     // Convertir en string pour assurer la cohérence
     const chalId = String(challengeId);
     
-    console.log(`${indent}🔍 CALCULATING LEVEL for ${chalId} (depth: ${depth})`);
+    debugLog(`${indent}🔍 CALCULATING LEVEL for ${chalId} (depth: ${depth})`);
     
     // Si déjà calculé, retourner le niveau
     if (levels[chalId] !== undefined) {
-        console.log(`${indent}📋 ${chalId} already calculated → Level ${levels[chalId]}`);
+        debugLog(`${indent}📋 ${chalId} already calculated → Level ${levels[chalId]}`);
         return levels[chalId];
     }
     
     // Éviter les cycles infinis
     if (visited.has(chalId)) {
-        console.warn(`${indent}🔄 CYCLE DETECTED for ${chalId} - treating as root`);
+        debugWarn(`${indent}🔄 CYCLE DETECTED for ${chalId} - treating as root`);
         levels[chalId] = 0; // Traiter comme racine en cas de cycle
         return 0;
     }
@@ -3002,27 +3019,27 @@ function calculateChallengeLevel(challengeId, challengeMap, levels = {}, visited
     }
     
     visited.add(chalId);
-    console.log(`${indent}📝 Added ${chalId} to visited set: [${Array.from(visited).join(', ')}]`);
+    debugLog(`${indent}📝 Added ${chalId} to visited set: [${Array.from(visited).join(', ')}]`);
     
     const challenge = challengeMap[chalId] || challengeMap[Number(chalId)];
     if (!challenge) {
-        console.warn(`${indent}❌ Challenge ${chalId} not found in challengeMap`);
-        console.log(`${indent}📚 Available challenges: [${Object.keys(challengeMap).join(', ')}]`);
+        debugWarn(`${indent}❌ Challenge ${chalId} not found in challengeMap`);
+        debugLog(`${indent}📚 Available challenges: [${Object.keys(challengeMap).join(', ')}]`);
         levels[chalId] = 0;
         visited.delete(chalId);
         return 0;
     }
     
-    console.log(`${indent}📊 Challenge: ${challenge.name}`);
-    console.log(`${indent}📊 Dependencies: [${(challenge.dependencies || []).join(', ')}]`);
-    console.log(`${indent}📊 Dependency count: ${(challenge.dependencies || []).length}`);
+    debugLog(`${indent}📊 Challenge: ${challenge.name}`);
+    debugLog(`${indent}📊 Dependencies: [${(challenge.dependencies || []).join(', ')}]`);
+    debugLog(`${indent}📊 Dependency count: ${(challenge.dependencies || []).length}`);
     
     // ✅ LEVEL 0: Challenges WITHOUT dependencies = ROOT/TOP of tree
     if (!challenge.dependencies || challenge.dependencies.length === 0) {
         levels[chalId] = 0;
-        console.log(`${indent}🌱 ROOT CHALLENGE: ${challenge.name} → Level 0 (no dependencies)`);
+        debugLog(`${indent}🌱 ROOT CHALLENGE: ${challenge.name} → Level 0 (no dependencies)`);
         visited.delete(chalId);
-        console.log(`${indent}📝 Removed ${chalId} from visited set`);
+        debugLog(`${indent}📝 Removed ${chalId} from visited set`);
         return 0;
     }
     
@@ -3030,44 +3047,44 @@ function calculateChallengeLevel(challengeId, challengeMap, levels = {}, visited
     let maxDependencyLevel = -1;
     let validDependencies = 0;
     
-    console.log(`${indent}🔗 Processing ${challenge.dependencies.length} dependencies for ${challenge.name}:`);
+    debugLog(`${indent}🔗 Processing ${challenge.dependencies.length} dependencies for ${challenge.name}:`);
     
     for (let i = 0; i < challenge.dependencies.length; i++) {
         const depId = challenge.dependencies[i];
         const depKey = String(depId);
         
-        console.log(`${indent}  [${i+1}/${challenge.dependencies.length}] Processing dependency: ${depId} → ${depKey}`);
+        debugLog(`${indent}  [${i+1}/${challenge.dependencies.length}] Processing dependency: ${depId} → ${depKey}`);
         
         const dependencyChallenge = challengeMap[depKey] || challengeMap[Number(depKey)];
         
         if (dependencyChallenge) {
-            console.log(`${indent}  ✅ Found dependency challenge: ${dependencyChallenge.name}`);
-            console.log(`${indent}  🔄 Recursively calculating level for dependency ${depKey}...`);
+            debugLog(`${indent}  ✅ Found dependency challenge: ${dependencyChallenge.name}`);
+            debugLog(`${indent}  🔄 Recursively calculating level for dependency ${depKey}...`);
             
             const depLevel = calculateChallengeLevel(depKey, challengeMap, levels, visited, depth + 1);
             
-            console.log(`${indent}  📊 Dependency ${dependencyChallenge.name} has level: ${depLevel}`);
+            debugLog(`${indent}  📊 Dependency ${dependencyChallenge.name} has level: ${depLevel}`);
             maxDependencyLevel = Math.max(maxDependencyLevel, depLevel);
             validDependencies++;
             
-            console.log(`${indent}  📈 Updated max dependency level: ${maxDependencyLevel} (valid deps: ${validDependencies})`);
+            debugLog(`${indent}  📈 Updated max dependency level: ${maxDependencyLevel} (valid deps: ${validDependencies})`);
         } else {
-            console.warn(`${indent}  ⚠️ Dependency ${depId} not found for ${challenge.name}`);
-            console.log(`${indent}  🔍 Searched for: '${depKey}' and '${Number(depKey)}'`);
-            console.log(`${indent}  🗂️ Available challenge keys: [${Object.keys(challengeMap).slice(0, 10).join(', ')}${Object.keys(challengeMap).length > 10 ? '...' : ''}]`);
+            debugWarn(`${indent}  ⚠️ Dependency ${depId} not found for ${challenge.name}`);
+            debugLog(`${indent}  🔍 Searched for: '${depKey}' and '${Number(depKey)}'`);
+            debugLog(`${indent}  🗂️ Available challenge keys: [${Object.keys(challengeMap).slice(0, 10).join(', ')}${Object.keys(challengeMap).length > 10 ? '...' : ''}]`);
         }
     }
     
-    console.log(`${indent}📊 Dependency analysis complete for ${challenge.name}:`);
-    console.log(`${indent}  - Valid dependencies: ${validDependencies}`);
-    console.log(`${indent}  - Max dependency level: ${maxDependencyLevel}`);
+    debugLog(`${indent}📊 Dependency analysis complete for ${challenge.name}:`);
+    debugLog(`${indent}  - Valid dependencies: ${validDependencies}`);
+    debugLog(`${indent}  - Max dependency level: ${maxDependencyLevel}`);
     
     // Si aucune dépendance valide, traiter comme racine
     if (validDependencies === 0) {
         levels[chalId] = 0;
-        console.log(`${indent}🌱 FALLBACK ROOT: ${challenge.name} → Level 0 (no valid dependencies)`);
+        debugLog(`${indent}🌱 FALLBACK ROOT: ${challenge.name} → Level 0 (no valid dependencies)`);
         visited.delete(chalId);
-        console.log(`${indent}📝 Removed ${chalId} from visited set`);
+        debugLog(`${indent}📝 Removed ${chalId} from visited set`);
         return 0;
     }
     
@@ -3075,10 +3092,10 @@ function calculateChallengeLevel(challengeId, challengeMap, levels = {}, visited
     const calculatedLevel = maxDependencyLevel + 1;
     levels[chalId] = calculatedLevel;
     
-    console.log(`${indent}🎯 HIERARCHICAL: ${challenge.name} → Level ${calculatedLevel} (max deps level: ${maxDependencyLevel} + 1)`);
+    debugLog(`${indent}🎯 HIERARCHICAL: ${challenge.name} → Level ${calculatedLevel} (max deps level: ${maxDependencyLevel} + 1)`);
     
     visited.delete(chalId); // Retirer de visited pour permettre d'autres calculs
-    console.log(`${indent}📝 Removed ${chalId} from visited set`);
+    debugLog(`${indent}📝 Removed ${chalId} from visited set`);
     
     return calculatedLevel;
 }
@@ -3087,12 +3104,12 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
     // Reconstruire challengeMap à partir des données CTFd
     
     if (!ctfdChallenges || ctfdChallenges.length === 0) {
-        console.warn('Aucun challenge reçu de CTFd, utilisation des données de démo');
+        debugWarn('Aucun challenge reçu de CTFd, utilisation des données de démo');
         return;
     }
     
-    console.log('=== CONSTRUCTION DE LA CARTE DES CHALLENGES ===');
-    console.log(`Nombre de challenges reçus: ${ctfdChallenges.length}`);
+    debugLog('=== CONSTRUCTION DE LA CARTE DES CHALLENGES ===');
+    debugLog(`Nombre de challenges reçus: ${ctfdChallenges.length}`);
     
     // Si on a des challenges, on remplace le challengeMap par défaut
     challengeMap = {};
@@ -3100,9 +3117,9 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
     // Étape 1: Créer tous les challenges sans dépendances
     ctfdChallenges.forEach(challenge => {
         // Debug: afficher la structure complète
-        console.log(`Challenge: ${challenge.name} (ID: ${challenge.id})`);
-        console.log(`  - Category: ${challenge.category}`);
-        console.log(`  - Value: ${challenge.value}`);
+        debugLog(`Challenge: ${challenge.name} (ID: ${challenge.id})`);
+        debugLog(`  - Category: ${challenge.category}`);
+        debugLog(`  - Value: ${challenge.value}`);
         
         // Utiliser l'ID comme clé string pour éviter les problèmes
         const challengeId = String(challenge.id);
@@ -3119,23 +3136,23 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
     });
     
     // Étape 2: Fetch les requirements pour chaque challenge
-    console.log('=== 🔍 DETAILED DEPENDENCY FETCHING DEBUG ===');
-    console.log(`Attempting to fetch dependencies for ${ctfdChallenges.length} challenges...`);
-    console.log('Current CTFd URL:', currentUser.ctfdUrl);
-    console.log('Token available:', !!currentUser.token);
+    debugLog('=== 🔍 DETAILED DEPENDENCY FETCHING DEBUG ===');
+    debugLog(`Attempting to fetch dependencies for ${ctfdChallenges.length} challenges...`);
+    debugLog('Current CTFd URL:', currentUser.ctfdUrl);
+    debugLog('Token available:', !!currentUser.token);
     
     // First, log the structure of a sample challenge to understand available fields
     if (ctfdChallenges.length > 0) {
-        console.log('📋 SAMPLE CHALLENGE STRUCTURE:');
+        debugLog('📋 SAMPLE CHALLENGE STRUCTURE:');
         const sampleChallenge = ctfdChallenges[0];
-        console.log('Available fields:', Object.keys(sampleChallenge));
-        console.log('Full sample challenge data:', sampleChallenge);
+        debugLog('Available fields:', Object.keys(sampleChallenge));
+        debugLog('Full sample challenge data:', sampleChallenge);
         
         // Check for common requirement field names
         const possibleRequirementFields = ['requirements', 'prerequisites', 'depends_on', 'dependencies'];
         possibleRequirementFields.forEach(field => {
             if (sampleChallenge[field] !== undefined) {
-                console.log(`🎯 Found potential requirement field '${field}':`, sampleChallenge[field]);
+                debugLog(`🎯 Found potential requirement field '${field}':`, sampleChallenge[field]);
             }
         });
     }
@@ -3143,10 +3160,10 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
     const requirementPromises = ctfdChallenges.map(async (challenge) => {
         const challengeId = String(challenge.id);
         
-        console.log(`\n📡 FETCHING REQUIREMENTS: ${challenge.name} (ID: ${challenge.id})`);
-        console.log(`  - Challenge category: ${challenge.category}`);
-        console.log(`  - Challenge value: ${challenge.value}`);
-        console.log(`  - Challenge state: ${challenge.state}`);
+        debugLog(`\n📡 FETCHING REQUIREMENTS: ${challenge.name} (ID: ${challenge.id})`);
+        debugLog(`  - Challenge category: ${challenge.category}`);
+        debugLog(`  - Challenge value: ${challenge.value}`);
+        debugLog(`  - Challenge state: ${challenge.state}`);
         
         // Check if challenge already has requirements in the initial data
         const possibleRequirementFields = ['requirements', 'prerequisites', 'depends_on', 'dependencies'];
@@ -3154,7 +3171,7 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
         
         possibleRequirementFields.forEach(field => {
             if (challenge[field] !== undefined && challenge[field] !== null) {
-                console.log(`  🎯 DIRECT REQUIREMENT FIELD '${field}' found:`, challenge[field]);
+                debugLog(`  🎯 DIRECT REQUIREMENT FIELD '${field}' found:`, challenge[field]);
                 foundDirectRequirements = true;
             }
         });
@@ -3162,27 +3179,27 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
         try {
             // Try the requirements endpoint first
             const requirementsEndpoint = `/api/v1/challenges/${challenge.id}/requirements`;
-            console.log(`  📞 Calling endpoint: ${requirementsEndpoint}`);
+            debugLog(`  📞 Calling endpoint: ${requirementsEndpoint}`);
             
             const requirementsResponse = await callCTFdAPI(requirementsEndpoint);
             
-            console.log(`  📦 RAW RESPONSE for ${challenge.name}:`);
-            console.log(`    - Success: ${requirementsResponse.success}`);
-            console.log(`    - Data type: ${typeof requirementsResponse.data}`);
-            console.log(`    - Data is array: ${Array.isArray(requirementsResponse.data)}`);
-            console.log(`    - Data length: ${requirementsResponse.data ? requirementsResponse.data.length : 'N/A'}`);
-            console.log(`    - Full data:`, requirementsResponse.data);
-            console.log(`    - Full response:`, requirementsResponse);
+            debugLog(`  📦 RAW RESPONSE for ${challenge.name}:`);
+            debugLog(`    - Success: ${requirementsResponse.success}`);
+            debugLog(`    - Data type: ${typeof requirementsResponse.data}`);
+            debugLog(`    - Data is array: ${Array.isArray(requirementsResponse.data)}`);
+            debugLog(`    - Data length: ${requirementsResponse.data ? requirementsResponse.data.length : 'N/A'}`);
+            debugLog(`    - Full data:`, requirementsResponse.data);
+            debugLog(`    - Full response:`, requirementsResponse);
             
             // Check if response data is a direct array (legacy format)
             if (requirementsResponse.data && Array.isArray(requirementsResponse.data)) {
                 const requirements = requirementsResponse.data.map(req => {
-                    console.log(`    🔗 Processing requirement item:`, req, `(type: ${typeof req})`);
+                    debugLog(`    🔗 Processing requirement item:`, req, `(type: ${typeof req})`);
                     return String(req);
                 });
                 challengeMap[challengeId].dependencies = requirements;
                 
-                console.log(`  ✅ ${challenge.name}: API Requirements found (direct array): [${requirements.join(', ')}]`);
+                debugLog(`  ✅ ${challenge.name}: API Requirements found (direct array): [${requirements.join(', ')}]`);
                 
                 return { challengeId, requirements, source: 'api' };
             }
@@ -3190,12 +3207,12 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
             else if (requirementsResponse.data && typeof requirementsResponse.data === 'object' && 
                      requirementsResponse.data.prerequisites && Array.isArray(requirementsResponse.data.prerequisites)) {
                 const requirements = requirementsResponse.data.prerequisites.map(req => {
-                    console.log(`    🔗 Processing prerequisite item:`, req, `(type: ${typeof req})`);
+                    debugLog(`    🔗 Processing prerequisite item:`, req, `(type: ${typeof req})`);
                     return String(req);
                 });
                 challengeMap[challengeId].dependencies = requirements;
                 
-                console.log(`  ✅ ${challenge.name}: API Prerequisites found: [${requirements.join(', ')}]`);
+                debugLog(`  ✅ ${challenge.name}: API Prerequisites found: [${requirements.join(', ')}]`);
                 
                 return { challengeId, requirements, source: 'api' };
             }
@@ -3206,26 +3223,26 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
                 const requirements = [String(singlePrereq)];
                 challengeMap[challengeId].dependencies = requirements;
                 
-                console.log(`  ✅ ${challenge.name}: Single prerequisite found: [${requirements.join(', ')}]`);
+                debugLog(`  ✅ ${challenge.name}: Single prerequisite found: [${requirements.join(', ')}]`);
                 
                 return { challengeId, requirements, source: 'api' };
             }
             // Handle other response formats
             else if (requirementsResponse.data !== null && requirementsResponse.data !== undefined) {
-                console.log(`  ⚠️ ${challenge.name}: Non-standard response from requirements API:`);
-                console.log(`    - Type: ${typeof requirementsResponse.data}`);
-                console.log(`    - Value:`, requirementsResponse.data);
+                debugLog(`  ⚠️ ${challenge.name}: Non-standard response from requirements API:`);
+                debugLog(`    - Type: ${typeof requirementsResponse.data}`);
+                debugLog(`    - Value:`, requirementsResponse.data);
                 
                 // Try to convert single value to array
                 if (typeof requirementsResponse.data === 'string' || typeof requirementsResponse.data === 'number') {
                     const requirements = [String(requirementsResponse.data)];
                     challengeMap[challengeId].dependencies = requirements;
-                    console.log(`  🔄 ${challenge.name}: Converted single requirement to array: [${requirements.join(', ')}]`);
+                    debugLog(`  🔄 ${challenge.name}: Converted single requirement to array: [${requirements.join(', ')}]`);
                     return { challengeId, requirements, source: 'api-converted' };
                 }
             }
             
-            console.log(`  ❌ ${challenge.name}: Empty or invalid requirements API response`);
+            debugLog(`  ❌ ${challenge.name}: Empty or invalid requirements API response`);
             
         } catch (error) {
             console.error(`  💥 ${challenge.name}: API ERROR when fetching requirements:`);
@@ -3236,8 +3253,8 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
             
             // Check if it's a 404 (endpoint doesn't exist) vs other errors
             if (error.status === 404) {
-                console.log(`    🚫 Requirements endpoint not available for this CTFd instance`);
-                console.log(`    🔄 Trying alternative endpoints...`);
+                debugLog(`    🚫 Requirements endpoint not available for this CTFd instance`);
+                debugLog(`    🔄 Trying alternative endpoints...`);
                 
                 // Try alternative endpoints that might exist in different CTFd versions
                 const alternativeEndpoints = [
@@ -3249,11 +3266,11 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
                 let foundAlternative = false;
                 for (const altEndpoint of alternativeEndpoints) {
                     try {
-                        console.log(`    📞 Trying alternative: ${altEndpoint}`);
+                        debugLog(`    📞 Trying alternative: ${altEndpoint}`);
                         const altResponse = await callCTFdAPI(altEndpoint);
                         
                         if (altResponse.data) {
-                            console.log(`    ✅ Alternative endpoint success:`, altResponse.data);
+                            debugLog(`    ✅ Alternative endpoint success:`, altResponse.data);
                             
                             // Check if this endpoint returns dependencies in different formats
                             const altData = altResponse.data;
@@ -3274,142 +3291,142 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
                             
                             if (altRequirements.length > 0) {
                                 challengeMap[challengeId].dependencies = altRequirements;
-                                console.log(`    🎯 Found dependencies via ${altEndpoint}: [${altRequirements.join(', ')}]`);
+                                debugLog(`    🎯 Found dependencies via ${altEndpoint}: [${altRequirements.join(', ')}]`);
                                 foundAlternative = true;
                                 return { challengeId, requirements: altRequirements, source: `alternative-${altEndpoint}` };
                             }
                         }
                     } catch (altError) {
-                        console.log(`    ❌ Alternative ${altEndpoint} failed:`, altError.message);
+                        debugLog(`    ❌ Alternative ${altEndpoint} failed:`, altError.message);
                     }
                 }
                 
                 if (!foundAlternative) {
-                    console.log(`    🚫 No alternative endpoints worked`);
+                    debugLog(`    🚫 No alternative endpoints worked`);
                 }
                 
             } else if (error.status === 403) {
-                console.log(`    🔒 Access denied to requirements endpoint`);
+                debugLog(`    🔒 Access denied to requirements endpoint`);
             } else if (error.status === 401) {
-                console.log(`    🔑 Authentication failed - token may be invalid`);
+                debugLog(`    🔑 Authentication failed - token may be invalid`);
             } else {
-                console.log(`    🌐 Network or server error`);
+                debugLog(`    🌐 Network or server error`);
             }
         }
         
         // Fallback: check direct challenge properties
-        console.log(`  🔄 ${challenge.name}: Attempting fallback to direct challenge properties...`);
+        debugLog(`  🔄 ${challenge.name}: Attempting fallback to direct challenge properties...`);
         
         let fallbackRequirements = [];
         possibleRequirementFields.forEach(field => {
             if (challenge[field] !== undefined && challenge[field] !== null) {
-                console.log(`    📋 Found fallback field '${field}':`, challenge[field]);
+                debugLog(`    📋 Found fallback field '${field}':`, challenge[field]);
                 if (Array.isArray(challenge[field])) {
                     fallbackRequirements = challenge[field].map(req => String(req));
                 } else if (typeof challenge[field] === 'string' || typeof challenge[field] === 'number') {
                     fallbackRequirements = [String(challenge[field])];
                 }
-                console.log(`    🎯 Processed fallback requirements: [${fallbackRequirements.join(', ')}]`);
+                debugLog(`    🎯 Processed fallback requirements: [${fallbackRequirements.join(', ')}]`);
             }
         });
         
         challengeMap[challengeId].dependencies = fallbackRequirements;
         
-        console.log(`  📝 ${challenge.name}: Final dependencies: [${fallbackRequirements.join(', ')}] (source: fallback)`);
+        debugLog(`  📝 ${challenge.name}: Final dependencies: [${fallbackRequirements.join(', ')}] (source: fallback)`);
         
         return { challengeId, requirements: fallbackRequirements, source: 'fallback' };
     });
     
     // Attendre toutes les requêtes de requirements
-    console.log('\n⏳ Waiting for all requirement requests to complete...');
+    debugLog('\n⏳ Waiting for all requirement requests to complete...');
     const allRequirements = await Promise.all(requirementPromises);
     
     // Analyze the results
-    console.log('\n📊 DEPENDENCY FETCHING SUMMARY:');
+    debugLog('\n📊 DEPENDENCY FETCHING SUMMARY:');
     const sourceCounts = { api: 0, 'api-converted': 0, fallback: 0 };
     const totalDependencies = allRequirements.reduce((total, req) => {
         sourceCounts[req.source] = (sourceCounts[req.source] || 0) + 1;
         return total + req.requirements.length;
     }, 0);
     
-    console.log(`  - Total challenges processed: ${allRequirements.length}`);
-    console.log(`  - Successfully fetched from API: ${sourceCounts.api || 0}`);
-    console.log(`  - Converted from API: ${sourceCounts['api-converted'] || 0}`);
-    console.log(`  - Used fallback: ${sourceCounts.fallback || 0}`);
-    console.log(`  - Total dependencies found: ${totalDependencies}`);
+    debugLog(`  - Total challenges processed: ${allRequirements.length}`);
+    debugLog(`  - Successfully fetched from API: ${sourceCounts.api || 0}`);
+    debugLog(`  - Converted from API: ${sourceCounts['api-converted'] || 0}`);
+    debugLog(`  - Used fallback: ${sourceCounts.fallback || 0}`);
+    debugLog(`  - Total dependencies found: ${totalDependencies}`);
     
     // List challenges with dependencies
     const challengesWithDeps = allRequirements.filter(req => req.requirements.length > 0);
-    console.log(`\n🔗 CHALLENGES WITH DEPENDENCIES (${challengesWithDeps.length}):`); 
+    debugLog(`\n🔗 CHALLENGES WITH DEPENDENCIES (${challengesWithDeps.length}):`); 
     challengesWithDeps.forEach(req => {
         const challengeName = challengeMap[req.challengeId]?.name || 'Unknown';
-        console.log(`  - ${challengeName}: [${req.requirements.join(', ')}] (${req.source})`);
+        debugLog(`  - ${challengeName}: [${req.requirements.join(', ')}] (${req.source})`);
     });
     
     if (challengesWithDeps.length === 0) {
-        console.log('  ⚠️ NO DEPENDENCIES FOUND! This will result in all challenges being at level 0.');
-        console.log('  This could mean:');
-        console.log('    1. CTFd instance has no challenge dependencies configured');
-        console.log('    2. Requirements API endpoint is not available');
-        console.log('    3. Current user lacks permissions to access requirements');
-        console.log('    4. CTFd version does not support challenge dependencies');
+        debugLog('  ⚠️ NO DEPENDENCIES FOUND! This will result in all challenges being at level 0.');
+        debugLog('  This could mean:');
+        debugLog('    1. CTFd instance has no challenge dependencies configured');
+        debugLog('    2. Requirements API endpoint is not available');
+        debugLog('    3. Current user lacks permissions to access requirements');
+        debugLog('    4. CTFd version does not support challenge dependencies');
         
         // Test our dependency logic with known data to ensure it works
-        console.log('\\n🧪 TESTING DEPENDENCY LOGIC...');
+        debugLog('\\n🧪 TESTING DEPENDENCY LOGIC...');
         validateDependencyLogic();
     }
     
     // Calculer les niveaux hiérarchiques avec DEBUG détaillé
     const levels = {};
-    console.log('\\n🧮 ===== LEVEL CALCULATION PHASE =====');
-    console.log(`📋 Total challenges to process: ${Object.keys(challengeMap).length}`);
-    console.log(`🗂️ Challenge IDs: [${Object.keys(challengeMap).join(', ')}]`);
+    debugLog('\\n🧮 ===== LEVEL CALCULATION PHASE =====');
+    debugLog(`📋 Total challenges to process: ${Object.keys(challengeMap).length}`);
+    debugLog(`🗂️ Challenge IDs: [${Object.keys(challengeMap).join(', ')}]`);
     
     // First, show a summary of all dependencies
-    console.log('\\n📊 DEPENDENCY SUMMARY:');
+    debugLog('\\n📊 DEPENDENCY SUMMARY:');
     Object.entries(challengeMap).forEach(([id, challenge]) => {
         const depCount = (challenge.dependencies || []).length;
         const depsStr = depCount > 0 ? `[${challenge.dependencies.join(', ')}]` : 'none';
-        console.log(`  ${id}: ${challenge.name} - deps: ${depsStr} (${depCount} total)`);
+        debugLog(`  ${id}: ${challenge.name} - deps: ${depsStr} (${depCount} total)`);
     });
     
-    console.log('\\n🔢 CALCULATING LEVELS FOR ALL CHALLENGES:');
+    debugLog('\\n🔢 CALCULATING LEVELS FOR ALL CHALLENGES:');
     Object.keys(challengeMap).forEach((challengeId, index) => {
-        console.log(`\\n--- [${index + 1}/${Object.keys(challengeMap).length}] Processing Challenge: ${challengeId} ---`);
+        debugLog(`\\n--- [${index + 1}/${Object.keys(challengeMap).length}] Processing Challenge: ${challengeId} ---`);
         const level = calculateChallengeLevel(challengeId, challengeMap, levels);
-        console.log(`✅ Final level for ${challengeMap[challengeId].name} (${challengeId}): ${level}`);
-        console.log(`📈 Current levels state: ${JSON.stringify(levels, null, 2)}`);
+        debugLog(`✅ Final level for ${challengeMap[challengeId].name} (${challengeId}): ${level}`);
+        debugLog(`📈 Current levels state: ${JSON.stringify(levels, null, 2)}`);
     });
     
-    console.log('=== NIVEAUX HIÉRARCHIQUES ===');
-    console.log('Niveaux calculés:', levels);
-    console.log(`Niveau maximum: ${Math.max(...Object.values(levels), 0)}`);
-    console.log('Challenges avec dépendances:', Object.entries(challengeMap).filter(([id, ch]) => ch.dependencies.length > 0).length);
+    debugLog('=== NIVEAUX HIÉRARCHIQUES ===');
+    debugLog('Niveaux calculés:', levels);
+    debugLog(`Niveau maximum: ${Math.max(...Object.values(levels), 0)}`);
+    debugLog('Challenges avec dépendances:', Object.entries(challengeMap).filter(([id, ch]) => ch.dependencies.length > 0).length);
     
     // Afficher les dépendances de chaque challenge avec DEBUG
-    console.log('\\n🔗 DETAILED DEPENDENCY ANALYSIS:');
+    debugLog('\\n🔗 DETAILED DEPENDENCY ANALYSIS:');
     Object.entries(challengeMap).forEach(([id, ch]) => {
-        console.log(`\\n📋 Challenge: ${ch.name} (ID: ${id}, Level: ${levels[id]})`);
-        console.log(`  📊 Position: (${ch.position.x}, ${ch.position.y})`);
-        console.log(`  🎯 Points: ${ch.points}, Category: ${ch.category}`);
+        debugLog(`\\n📋 Challenge: ${ch.name} (ID: ${id}, Level: ${levels[id]})`);
+        debugLog(`  📊 Position: (${ch.position.x}, ${ch.position.y})`);
+        debugLog(`  🎯 Points: ${ch.points}, Category: ${ch.category}`);
         
         if (ch.dependencies.length > 0) {
-            console.log(`  🔗 Dependencies (${ch.dependencies.length}):`);
+            debugLog(`  🔗 Dependencies (${ch.dependencies.length}):`);
             ch.dependencies.forEach((depId, index) => {
                 const dep = challengeMap[depId];
                 if (dep) {
-                    console.log(`    [${index + 1}] ${dep.name} (ID: ${depId}, Level: ${levels[depId]})`);
+                    debugLog(`    [${index + 1}] ${dep.name} (ID: ${depId}, Level: ${levels[depId]})`);
                 } else {
-                    console.warn(`    [${index + 1}] ❌ MISSING: ID ${depId} not found in challengeMap`);
+                    debugWarn(`    [${index + 1}] ❌ MISSING: ID ${depId} not found in challengeMap`);
                 }
             });
         } else {
-            console.log(`  🌱 ROOT CHALLENGE (no dependencies)`);
+            debugLog(`  🌱 ROOT CHALLENGE (no dependencies)`);
         }
     });
     
     // Validate level consistency
-    console.log('\\n🔍 LEVEL CONSISTENCY VALIDATION:');
+    debugLog('\\n🔍 LEVEL CONSISTENCY VALIDATION:');
     let inconsistencyFound = false;
     Object.entries(challengeMap).forEach(([id, ch]) => {
         if (ch.dependencies.length > 0) {
@@ -3421,21 +3438,21 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
                 console.error(`  ❌ INCONSISTENCY: ${ch.name} has level ${challengeLevel}, but should be ${expectedLevel} based on dependencies`);
                 inconsistencyFound = true;
             } else {
-                console.log(`  ✅ ${ch.name}: Level ${challengeLevel} is correct`);
+                debugLog(`  ✅ ${ch.name}: Level ${challengeLevel} is correct`);
             }
         }
     });
     
     if (!inconsistencyFound) {
-        console.log('  🎉 All challenge levels are consistent!');
+        debugLog('  🎉 All challenge levels are consistent!');
     }
     
     // Calculer le niveau maximum
     const maxLevel = Math.max(...Object.values(levels), 0);
-    console.log(`NIVEAU MAXIMUM FINAL: ${maxLevel}`);
+    debugLog(`NIVEAU MAXIMUM FINAL: ${maxLevel}`);
     
     // ALGORITHME SIMPLE ET EFFICACE
-    console.log('=== POSITIONNEMENT DES CHALLENGES ===');
+    debugLog('=== POSITIONNEMENT DES CHALLENGES ===');
     
     // Grouper par niveau avec DEBUG détaillé
     const levelChallenges = {};
@@ -3443,16 +3460,16 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
         levelChallenges[i] = [];
     }
     
-    console.log('=== GROUPEMENT PAR NIVEAU ===');
+    debugLog('=== GROUPEMENT PAR NIVEAU ===');
     Object.entries(challengeMap).forEach(([id, challenge]) => {
         const level = levels[id] || 0;
         levelChallenges[level].push(id);
-        console.log(`${challenge.name} assigné au niveau ${level}`);
+        debugLog(`${challenge.name} assigné au niveau ${level}`);
     });
     
     // Afficher la distribution par niveau
     for (let level = 0; level <= maxLevel; level++) {
-        console.log(`Niveau ${level}: ${levelChallenges[level].length} challenges - [${levelChallenges[level].map(id => challengeMap[id].name).join(', ')}]`);
+        debugLog(`Niveau ${level}: ${levelChallenges[level].length} challenges - [${levelChallenges[level].map(id => challengeMap[id].name).join(', ')}]`);
     }
     
     // ✅ PROFESSIONAL POSITIONING ALGORITHM - TOP-DOWN HIERARCHY
@@ -3462,13 +3479,13 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
     const START_Y = 60;        // Start near top for Level 0 (ROOT)
     const MIN_SPACING = 180;   // Minimum horizontal spacing
     
-    console.log('\\n🎨 ===== POSITIONING ALGORITHM =====');
-    console.log(`📐 Canvas width: ${CANVAS_WIDTH}px`);
-    console.log(`📏 Level height: ${LEVEL_HEIGHT}px`);
-    console.log(`📦 Challenge width: ${CHALLENGE_WIDTH}px`);
-    console.log(`📍 Start Y: ${START_Y}px`);
-    console.log(`↔️ Min spacing: ${MIN_SPACING}px`);
-    console.log(`📊 Level 0 (ROOT) at Y=${START_Y} - Dependencies flow DOWNWARD`);
+    debugLog('\\n🎨 ===== POSITIONING ALGORITHM =====');
+    debugLog(`📐 Canvas width: ${CANVAS_WIDTH}px`);
+    debugLog(`📏 Level height: ${LEVEL_HEIGHT}px`);
+    debugLog(`📦 Challenge width: ${CHALLENGE_WIDTH}px`);
+    debugLog(`📍 Start Y: ${START_Y}px`);
+    debugLog(`↔️ Min spacing: ${MIN_SPACING}px`);
+    debugLog(`📊 Level 0 (ROOT) at Y=${START_Y} - Dependencies flow DOWNWARD`);
     
     for (let level = 0; level <= maxLevel; level++) {
         const challenges = levelChallenges[level];
@@ -3494,18 +3511,18 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
             startX = (CANVAS_WIDTH - totalUsedWidth) / 2;
         }
         
-        console.log(`\\n📍 LEVEL ${level} POSITIONING:`);
-        console.log(`  📊 Challenge count: ${challenges.length}`);
-        console.log(`  📏 Y position: ${y}px`);
-        console.log(`  📐 Start X: ${startX}px`);
-        console.log(`  ↔️ Spacing: ${spacing}px`);
+        debugLog(`\\n📍 LEVEL ${level} POSITIONING:`);
+        debugLog(`  📊 Challenge count: ${challenges.length}`);
+        debugLog(`  📏 Y position: ${y}px`);
+        debugLog(`  📐 Start X: ${startX}px`);
+        debugLog(`  ↔️ Spacing: ${spacing}px`);
         
         // Position each challenge in this level
         challenges.forEach((id, index) => {
             const x = challenges.length === 1 ? startX : startX + (index * spacing);
             
-            console.log(`    [${index + 1}/${challenges.length}] Positioning ${challengeMap[id].name}:`);
-            console.log(`      - Calculation: ${challenges.length === 1 ? 'Single (centered)' : `startX(${startX}) + index(${index}) * spacing(${spacing})`} = ${x}`);
+            debugLog(`    [${index + 1}/${challenges.length}] Positioning ${challengeMap[id].name}:`);
+            debugLog(`      - Calculation: ${challenges.length === 1 ? 'Single (centered)' : `startX(${startX}) + index(${index}) * spacing(${spacing})`} = ${x}`);
             
             challengeMap[id].position = {
                 x: Math.round(x),
@@ -3513,54 +3530,54 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
             };
             
             const levelType = level === 0 ? 'ROOT' : `LEVEL-${level}`;
-            console.log(`      - Final position: (${challengeMap[id].position.x}, ${challengeMap[id].position.y})`);
-            console.log(`      ✅ ${levelType}: ${challengeMap[id].name} positioned`);
+            debugLog(`      - Final position: (${challengeMap[id].position.x}, ${challengeMap[id].position.y})`);
+            debugLog(`      ✅ ${levelType}: ${challengeMap[id].name} positioned`);
         });
     }
     
-    console.log('\\n📈 FINAL HIERARCHY SUMMARY:');
-    console.log(`  🎯 Total challenges: ${Object.keys(challengeMap).length}`);
-    console.log(`  📊 Max level: ${maxLevel}`);
-    console.log(`  🔗 Challenges with dependencies: ${Object.entries(challengeMap).filter(([id, ch]) => ch.dependencies.length > 0).length}`);
-    console.log(`  🌱 Root challenges (level 0): ${levelChallenges[0]?.length || 0}`);
+    debugLog('\\n📈 FINAL HIERARCHY SUMMARY:');
+    debugLog(`  🎯 Total challenges: ${Object.keys(challengeMap).length}`);
+    debugLog(`  📊 Max level: ${maxLevel}`);
+    debugLog(`  🔗 Challenges with dependencies: ${Object.entries(challengeMap).filter(([id, ch]) => ch.dependencies.length > 0).length}`);
+    debugLog(`  🌱 Root challenges (level 0): ${levelChallenges[0]?.length || 0}`);
     
     // DEBUG: Final position validation
-    console.log('\\n🎨 FINAL POSITION VALIDATION:');
+    debugLog('\\n🎨 FINAL POSITION VALIDATION:');
     let positionErrors = 0;
     Object.entries(challengeMap).forEach(([id, ch]) => {
         if (typeof ch.position.x !== 'number' || typeof ch.position.y !== 'number') {
             console.error(`  ❌ ${ch.name}: Invalid position (${ch.position.x}, ${ch.position.y})`);
             positionErrors++;
         } else if (ch.position.x < 0 || ch.position.y < 0) {
-            console.warn(`  ⚠️ ${ch.name}: Negative position (${ch.position.x}, ${ch.position.y})`);
+            debugWarn(`  ⚠️ ${ch.name}: Negative position (${ch.position.x}, ${ch.position.y})`);
         } else {
-            console.log(`  ✅ ${ch.name}: Valid position (${ch.position.x}, ${ch.position.y}) at level ${levels[id] || 0}`);
+            debugLog(`  ✅ ${ch.name}: Valid position (${ch.position.x}, ${ch.position.y}) at level ${levels[id] || 0}`);
         }
     });
     
     if (positionErrors === 0) {
-        console.log('  🎉 All challenge positions are valid!');
+        debugLog('  🎉 All challenge positions are valid!');
     } else {
         console.error(`  💥 Found ${positionErrors} position errors!`);
     }
     
     // Show distribution by level
-    console.log('\\n📊 FINAL LEVEL DISTRIBUTION:');
+    debugLog('\\n📊 FINAL LEVEL DISTRIBUTION:');
     for (let level = 0; level <= maxLevel; level++) {
         const challenges = levelChallenges[level];
         if (challenges.length > 0) {
-            console.log(`  Level ${level}: ${challenges.length} challenges`);
+            debugLog(`  Level ${level}: ${challenges.length} challenges`);
             challenges.forEach(id => {
                 const ch = challengeMap[id];
-                console.log(`    - ${ch.name} at (${ch.position.x}, ${ch.position.y})`);
+                debugLog(`    - ${ch.name} at (${ch.position.x}, ${ch.position.y})`);
             });
         }
     }
     
     // Si tous les challenges sont au niveau 0 (pas de dépendances), créer une hiérarchie artificielle
     if (maxLevel === 0 && Object.keys(challengeMap).length > 5) {
-        console.log('=== AUCUNE DÉPENDANCE TROUVÉE ===');
-        console.log('Création d\'une hiérarchie artificielle basée sur les points et catégories...');
+        debugLog('=== AUCUNE DÉPENDANCE TROUVÉE ===');
+        debugLog('Création d\'une hiérarchie artificielle basée sur les points et catégories...');
         
         // Option 1: Créer des dépendances artificielles basées sur les points
         const challengesByCategory = {};
@@ -3587,12 +3604,12 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
                 challengeMap[currentChallenge.id].dependencies = [previousChallenge.id];
                 artificialDependenciesCreated++;
                 
-                console.log(`  Dépendance créée: ${currentChallenge.challenge.name} dépend de ${previousChallenge.challenge.name}`);
+                debugLog(`  Dépendance créée: ${currentChallenge.challenge.name} dépend de ${previousChallenge.challenge.name}`);
             }
         });
         
         if (artificialDependenciesCreated > 0) {
-            console.log(`${artificialDependenciesCreated} dépendances artificielles créées`);
+            debugLog(`${artificialDependenciesCreated} dépendances artificielles créées`);
             
             // Recalculer les niveaux avec les nouvelles dépendances
             const newLevels = {};
@@ -3601,8 +3618,8 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
             });
             
             const newMaxLevel = Math.max(...Object.values(newLevels), 0);
-            console.log(`Nouveaux niveaux après dépendances artificielles:`, newLevels);
-            console.log(`Nouveau niveau maximum: ${newMaxLevel}`);
+            debugLog(`Nouveaux niveaux après dépendances artificielles:`, newLevels);
+            debugLog(`Nouveau niveau maximum: ${newMaxLevel}`);
             
             // Repositionner avec les nouveaux niveaux
             if (newMaxLevel > 0) {
@@ -3634,7 +3651,7 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
                     challenges.forEach((id, index) => {
                         const x = challenges.length === 1 ? startX : startX + (index * spacing);
                         challengeMap[id].position = { x: Math.round(x), y: y };
-                        console.log(`  Repositionné ${challengeMap[id].name}: niveau ${level}, (${x}, ${y})`);
+                        debugLog(`  Repositionné ${challengeMap[id].name}: niveau ${level}, (${x}, ${y})`);
                     });
                 }
                 
@@ -3643,7 +3660,7 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
         }
         
         // Fallback: organisation par catégorie si pas de dépendances artificielles possibles
-        console.log('Fallback: organisation par catégorie en grille');
+        debugLog('Fallback: organisation par catégorie en grille');
         
         const categoryGroups = {};
         Object.entries(challengeMap).forEach(([id, challenge]) => {
@@ -3663,7 +3680,7 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
         
         categories.forEach((category, catIndex) => {
             const challenges = categoryGroups[category];
-            console.log(`Catégorie ${category}: ${challenges.length} challenges`);
+            debugLog(`Catégorie ${category}: ${challenges.length} challenges`);
             
             challenges.forEach((challengeId, index) => {
                 const row = Math.floor(index / challengesPerRow);
@@ -3739,7 +3756,7 @@ function updateWrapperDimensions() {
     wrapper.style.width = `${wrapperWidth}px`;
     wrapper.style.height = `${wrapperHeight}px`;
     
-    console.log(`🔧 Updated wrapper dimensions: ${wrapperWidth}×${wrapperHeight}`);
+    debugLog(`🔧 Updated wrapper dimensions: ${wrapperWidth}×${wrapperHeight}`);
 }
 
 function updateNavigationInfo() {
@@ -3960,7 +3977,7 @@ async function waitForEssentialElements(timeout = 10000) {
         });
         
         if (allPresent) {
-            console.log('✅ All essential DOM elements are ready');
+            debugLog('✅ All essential DOM elements are ready');
             return true;
         }
         
@@ -3968,7 +3985,7 @@ async function waitForEssentialElements(timeout = 10000) {
         await new Promise(resolve => setTimeout(resolve, 50));
     }
     
-    console.warn('⚠️ Some essential elements not ready after timeout:', 
+    debugWarn('⚠️ Some essential elements not ready after timeout:', 
         essentialElements.filter(id => !document.getElementById(id)));
     return false;
 }
@@ -3977,7 +3994,7 @@ async function waitForEssentialElements(timeout = 10000) {
  * Run startup verification to ensure systems are working properly
  */
 function runStartupVerification() {
-    console.log('🔍 Running startup verification...');
+    debugLog('🔍 Running startup verification...');
     
     const checks = {
         'DOM Ready': () => document.readyState === 'complete',
@@ -3991,31 +4008,31 @@ function runStartupVerification() {
     for (const [checkName, checkFunction] of Object.entries(checks)) {
         try {
             const result = checkFunction();
-            console.log(`  ${result ? '✅' : '❌'} ${checkName}: ${result}`);
+            debugLog(`  ${result ? '✅' : '❌'} ${checkName}: ${result}`);
             if (!result) allPassed = false;
         } catch (error) {
-            console.log(`  ❌ ${checkName}: ERROR - ${error.message}`);
+            debugLog(`  ❌ ${checkName}: ERROR - ${error.message}`);
             allPassed = false;
         }
     }
     
     if (allPassed) {
-        console.log('✅ All startup checks passed');
+        debugLog('✅ All startup checks passed');
     } else {
-        console.warn('⚠️ Some startup checks failed - application may have limited functionality');
+        debugWarn('⚠️ Some startup checks failed - application may have limited functionality');
     }
     
     // Test basic API readiness (not actual connection)
     if (typeof fetch === 'function') {
-        console.log('  ✅ API capabilities available');
+        debugLog('  ✅ API capabilities available');
     } else {
-        console.warn('  ⚠️ Fetch API not available - old browser?');
+        debugWarn('  ⚠️ Fetch API not available - old browser?');
     }
 }
 
 // Initialisation with enhanced error handling
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🚀 Starting application initialization...');
+    debugLog('🚀 Starting application initialization...');
     
     // Wait for all essential DOM elements to be ready
     await waitForEssentialElements();
@@ -4032,18 +4049,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     initializeDragAndDrop();
     
     // Récupérer l'URL CTFd depuis le serveur si on utilise le proxy
+    // Mais seulement si l'utilisateur n'a pas déjà saisi une URL
     if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
         try {
             const response = await fetch('/config');
             const config = await response.json();
             
-            // Pré-remplir le champ URL avec l'URL fournie par CTFD_URL
             const urlInput = document.getElementById('ctfd-url');
-            if (urlInput && config.ctfdUrl) {
+            // Pré-remplir uniquement si le champ contient la valeur par défaut
+            if (urlInput && config.ctfdUrl && urlInput.value === 'https://demo.ctfd.io') {
                 urlInput.value = config.ctfdUrl;
+                debugLog('URL pré-remplie avec CTFD_URL:', config.ctfdUrl);
+            } else if (urlInput && urlInput.value !== 'https://demo.ctfd.io') {
+                debugLog('URL utilisateur conservée:', urlInput.value);
             }
         } catch (error) {
-            console.log('Impossible de récupérer la configuration:', error);
+            debugLog('Impossible de récupérer la configuration:', error);
             // Pas grave, on garde la valeur par défaut
         }
     }
