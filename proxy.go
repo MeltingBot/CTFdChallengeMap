@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 var (
@@ -25,6 +26,13 @@ type Config struct {
 
 type ConfigUpdate struct {
 	CTFdURL string `json:"ctfdUrl"`
+}
+
+type HealthResponse struct {
+	Status    string `json:"status"`
+	Proxy     string `json:"proxy"`
+	Target    string `json:"target"`
+	Timestamp string `json:"timestamp"`
 }
 
 // createProxy creates a new reverse proxy for the given URL
@@ -78,6 +86,18 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Log the request
 		log.Printf("%s %s", r.Method, r.URL.Path)
+
+		// Handle /health endpoint
+		if r.URL.Path == "/health" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(HealthResponse{
+				Status:    "ok",
+				Proxy:     "running",
+				Target:    currentURL,
+				Timestamp: time.Now().Format(time.RFC3339),
+			})
+			return
+		}
 
 		// Handle /config endpoint
 		if r.URL.Path == "/config" {

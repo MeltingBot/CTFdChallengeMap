@@ -932,9 +932,17 @@ async function loadTeamDataLazy(teamName) {
             throw new Error(`Team ${teamName} not found`);
         }
         
+        if (!team.id) {
+            throw new Error(`Team ${teamName} has no ID`);
+        }
+        
+        debugLog(`🔄 Loading solves for team ${teamName} (ID: ${team.id})`);
+        
         try {
             const solvesResponse = await callCTFdAPI(`/api/v1/teams/${team.id}/solves`);
             const solves = solvesResponse.data || [];
+            
+            debugLog(`📦 Received ${solves.length} solves for team ${teamName}`);
             
             // Construire teamProgress pour cette équipe
             if (!teamProgress[teamName]) {
@@ -973,6 +981,14 @@ async function loadTeamDataLazy(teamName) {
             
         } catch (error) {
             console.error(`Erreur chargement solves pour ${teamName}:`, error);
+            
+            // Gestion spécifique selon le type d'erreur
+            if (error.name === 'TypeError' && error.message.includes('NetworkError')) {
+                debugWarn(`NetworkError pour team ${teamName} - possiblement un problème de proxy ou de permissions`);
+            } else if (error.message.includes('403') || error.message.includes('401')) {
+                debugWarn(`Permissions insuffisantes pour accéder aux solves de ${teamName}`);
+            }
+            
             // En cas d'erreur, initialiser avec des données vides
             teamProgress[teamName] = {};
             syncTeamProgress();
@@ -2868,6 +2884,13 @@ function updateAPIStatus(status, message) {
     if (status === 'connected') {
         hideError();
         isConnected = true;
+    } else if (status === 'proxy') {
+        // Proxy actif mais pas encore connecté à CTFd
+        hideError();
+        isConnected = false;
+    } else if (status === 'proxy-down') {
+        // Proxy non démarré
+        isConnected = false;
     } else {
         isConnected = false;
     }
@@ -4048,12 +4071,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize drag & drop system
     initializeDragAndDrop();
     
-    // Récupérer l'URL CTFd depuis le serveur si on utilise le proxy
-    // Mais seulement si l'utilisateur n'a pas déjà saisi une URL
+    // Vérifier le proxy et récupérer l'URL CTFd si en mode local
     if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
         try {
-            const response = await fetch('/config');
-            const config = await response.json();
+            // Vérifier que le proxy est actif
+            const healthResponse = await fetch('/health');
+            const healthData = await healthResponse.json();
+            debugLog('Proxy status:', healthData);
+            
+            // Récupérer la configuration
+            const configResponse = await fetch('/config');
+            const config = await configResponse.json();
             
             const urlInput = document.getElementById('ctfd-url');
             // Pré-remplir uniquement si le champ contient la valeur par défaut
@@ -4063,9 +4091,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (urlInput && urlInput.value !== 'https://demo.ctfd.io') {
                 debugLog('URL utilisateur conservée:', urlInput.value);
             }
+            
+            // Afficher un indicateur que le proxy est actif
+            updateAPIStatus('proxy', `Proxy actif: ${config.ctfdUrl}`);
+            
         } catch (error) {
-            debugLog('Impossible de récupérer la configuration:', error);
-            // Pas grave, on garde la valeur par défaut
+            debugLog('Proxy non accessible:', error);
+            // Afficher un avertissement que le proxy n'est pas actif
+            updateAPIStatus('proxy-down', 'Proxy non démarré - utilisez npm start');
+            showError('Le proxy local n\'est pas démarré. Lancez "npm start" ou utilisez le mode direct avec une extension CORS.');
         }
     }
 }); // End of initialization
