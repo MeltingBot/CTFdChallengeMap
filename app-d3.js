@@ -573,11 +573,11 @@ function updateD3Positions() {
  */
 function updateD3NodeStyles(nodes) {
     nodes.select('.d3-challenge-rect')
-        .attr('fill', d => getChallengeColor(d.status).background)
-        .attr('stroke', d => getChallengeColor(d.status).border);
+        .attr('fill', d => getChallengeColor(d.status, d.id).background)
+        .attr('stroke', d => getChallengeColor(d.status, d.id).border);
     
     nodes.select('.d3-challenge-status')
-        .attr('fill', d => getChallengeColor(d.status).status);
+        .attr('fill', d => getChallengeColor(d.status, d.id).status);
 }
 
 /**
@@ -632,6 +632,23 @@ function showD3Tooltip(event, d) {
     content += `Category: ${d.category}<br>`;
     content += `Points: ${d.points}<br>`;
     content += `Status: ${getStatusText(d.status)}<br>`;
+    
+    // Add heatmap information if in heatmap mode
+    if (window.heatmapMode && window.getChallengeHeatmapColors) {
+        const heatmapData = window.getChallengeHeatmapColors();
+        if (heatmapData[d.id]) {
+            const data = heatmapData[d.id];
+            content += `<br><strong>Temps de résolution:</strong><br>`;
+            content += `• Temps moyen: ${data.timeFormatted}<br>`;
+            content += `• Équipes: ${data.solveCount}/${window.selectedTeams.length}<br>`;
+            content += `• Difficulté: ${Math.round(data.normalizedTime * 100)}%<br>`;
+        } else {
+            // Challenge not solved by selected teams
+            content += `<br><strong>Heatmap:</strong><br>`;
+            content += `• Non résolu par les équipes sélectionnées<br>`;
+            content += `• Aucune donnée de temps disponible<br>`;
+        }
+    }
     
     if (d.dependencies.length > 0) {
         content += `<br><strong>Dependencies:</strong><br>`;
@@ -820,7 +837,28 @@ function getChallengeTeamIndicators(challengeId) {
     }).filter(indicator => indicator.solved);
 }
 
-function getChallengeColor(status) {
+function getChallengeColor(status, challengeId = null) {
+    // Check if heatmap mode is active
+    if (window.heatmapMode && challengeId && window.getChallengeHeatmapColors) {
+        const heatmapData = window.getChallengeHeatmapColors();
+        if (heatmapData[challengeId]) {
+            const heatColor = heatmapData[challengeId].color;
+            return {
+                background: heatColor,
+                border: heatColor,
+                status: '#ffffff'
+            };
+        } else {
+            // Challenge not solved/attempted by selected teams - show in gray
+            return {
+                background: '#f3f4f6',
+                border: '#d1d5db',
+                status: '#9ca3af'
+            };
+        }
+    }
+    
+    // Default status-based colors
     const colors = {
         solved: {
             background: 'url(#gradient-solved)',

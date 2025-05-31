@@ -62,6 +62,131 @@ function generateDistinctTeamColors(count) {
 
 // Make the function available globally for other modules
 window.generateDistinctTeamColors = generateDistinctTeamColors;
+window.getChallengeHeatmapColors = getChallengeHeatmapColors;
+
+/**
+ * Calculate average solve time for each challenge from selected teams
+ * Returns object with challengeId -> average time in milliseconds
+ */
+function calculateChallengeHeatmap() {
+    const heatmapData = {};
+    
+    if (!selectedTeams || selectedTeams.length === 0) {
+        return heatmapData;
+    }
+    
+    // Iterate through all challenges
+    Object.keys(challengeMap).forEach(challengeId => {
+        const solveTimes = [];
+        
+        // Collect solve times from selected teams
+        selectedTeams.forEach(teamName => {
+            const teamData = teamProgress[teamName];
+            if (teamData && teamData[challengeId] && 
+                teamData[challengeId].status === 'solved' && 
+                teamData[challengeId].date) {
+                
+                const solveDate = new Date(teamData[challengeId].date);
+                
+                // Find previous challenge solve to calculate time difference
+                const previousSolve = findPreviousSolveForTeam(teamName, challengeId, solveDate);
+                if (previousSolve) {
+                    const timeDiff = solveDate - new Date(previousSolve.date);
+                    solveTimes.push(timeDiff);
+                } else {
+                    // For first challenge, use time from CTF start (approximation)
+                    // We can use a baseline or skip if no reference point
+                    const ctfStart = new Date(solveDate);
+                    ctfStart.setHours(ctfStart.getHours() - 1); // Assume 1 hour before first solve
+                    solveTimes.push(solveDate - ctfStart);
+                }
+            }
+        });
+        
+        // Calculate average solve time for this challenge
+        if (solveTimes.length > 0) {
+            const avgTime = solveTimes.reduce((sum, time) => sum + time, 0) / solveTimes.length;
+            heatmapData[challengeId] = {
+                averageTime: avgTime,
+                solveCount: solveTimes.length,
+                times: solveTimes
+            };
+        }
+    });
+    
+    return heatmapData;
+}
+
+/**
+ * Convert time to heatmap color (cold to hot scale)
+ * @param {number} time - Time in milliseconds
+ * @param {number} minTime - Minimum time in dataset
+ * @param {number} maxTime - Maximum time in dataset
+ * @returns {string} - CSS color value
+ */
+function getHeatmapColor(time, minTime, maxTime) {
+    if (maxTime === minTime) {
+        return 'hsl(240, 70%, 65%)'; // Default blue if all times are equal
+    }
+    
+    // Normalize time to 0-1 range
+    const normalized = (time - minTime) / (maxTime - minTime);
+    
+    // Color scale: Blue (cold/fast) -> Green -> Yellow -> Red (hot/slow)
+    let hue, saturation, lightness;
+    
+    if (normalized <= 0.25) {
+        // Blue to Cyan (240° to 180°)
+        hue = 240 - (normalized * 4) * 60;
+        saturation = 70;
+        lightness = 65;
+    } else if (normalized <= 0.5) {
+        // Cyan to Green (180° to 120°)
+        hue = 180 - ((normalized - 0.25) * 4) * 60;
+        saturation = 70;
+        lightness = 60;
+    } else if (normalized <= 0.75) {
+        // Green to Yellow (120° to 60°)
+        hue = 120 - ((normalized - 0.5) * 4) * 60;
+        saturation = 75;
+        lightness = 55;
+    } else {
+        // Yellow to Red (60° to 0°)
+        hue = 60 - ((normalized - 0.75) * 4) * 60;
+        saturation = 80;
+        lightness = 50;
+    }
+    
+    return `hsl(${Math.round(hue)}, ${saturation}%, ${lightness}%)`;
+}
+
+/**
+ * Get heatmap data and colors for all challenges
+ */
+function getChallengeHeatmapColors() {
+    const heatmapData = calculateChallengeHeatmap();
+    const times = Object.values(heatmapData).map(d => d.averageTime);
+    
+    if (times.length === 0) {
+        return {};
+    }
+    
+    const minTime = Math.min(...times);
+    const maxTime = Math.max(...times);
+    
+    const colorMap = {};
+    Object.entries(heatmapData).forEach(([challengeId, data]) => {
+        colorMap[challengeId] = {
+            color: getHeatmapColor(data.averageTime, minTime, maxTime),
+            time: data.averageTime,
+            normalizedTime: (data.averageTime - minTime) / (maxTime - minTime),
+            solveCount: data.solveCount,
+            timeFormatted: formatTimeDiffDetailed(data.averageTime)
+        };
+    });
+    
+    return colorMap;
+}
 
 // Challenge solve times modal
 let currentChallengeModal = null;
@@ -96,6 +221,10 @@ let customPositions = {}; // Store custom positions
 let parcoursMode = false;
 window.parcoursMode = false;
 
+// Heatmap mode
+let heatmapMode = false;
+window.heatmapMode = false;
+
 // Debug mode for dependency troubleshooting
 let debugMode = true; // Set to false to reduce console noise
 
@@ -108,6 +237,12 @@ function setSelectedTeams(newTeams) {
     if (window.parcoursMode && window.updateTeamPaths) {
         // Small delay to ensure DOM is updated
         setTimeout(() => window.updateTeamPaths(), 50);
+    }
+    
+    // Update heatmap if heatmap mode is active
+    if (window.heatmapMode && d3SystemReady && window.renderD3Challenges) {
+        // Small delay to ensure data is updated
+        setTimeout(() => window.renderD3Challenges(), 50);
     }
 }
 
@@ -2103,18 +2238,38 @@ function setViewMode(mode) {
     if (mode === 'paths') {
         parcoursMode = true;
         window.parcoursMode = true;
+        heatmapMode = false;
+        window.heatmapMode = false;
         console.log('🛤️ Mode Parcours activé');
         if (d3SystemReady && window.updateTeamPaths) {
             window.updateTeamPaths();
         }
-    } else {
+        // Hide heatmap legend
+        document.getElementById('heatmap-legend').classList.remove('visible');
+    } else if (mode === 'heatmap') {
+        heatmapMode = true;
+        window.heatmapMode = true;
         parcoursMode = false;
         window.parcoursMode = false;
-        console.log('🛤️ Mode Parcours désactivé');
-        // Clear paths
+        console.log('🔥 Mode Heatmap activé');
+        // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
             window.d3Data.pathGroup.selectAll('*').remove();
         }
+        // Show heatmap legend
+        document.getElementById('heatmap-legend').classList.add('visible');
+    } else {
+        parcoursMode = false;
+        window.parcoursMode = false;
+        heatmapMode = false;
+        window.heatmapMode = false;
+        console.log('🗂️ Mode Overview activé');
+        // Clear paths if any
+        if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
+            window.d3Data.pathGroup.selectAll('*').remove();
+        }
+        // Hide heatmap legend
+        document.getElementById('heatmap-legend').classList.remove('visible');
     }
     
     updateVisualization();
