@@ -1,0 +1,3689 @@
+// Variables globales
+let currentUser = { name: null, token: null, ctfdUrl: null, permissions: null, teamName: null, id: null };
+let challenges = {};
+let teams = [];
+let teamProgress = {};
+let selectedTeams = [];
+let currentViewMode = 'overview';
+let isConnected = false;
+let userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
+
+// Challenge solve times modal
+let currentChallengeModal = null;
+
+// D3 system state
+let d3SystemReady = false;
+let d3InitializationInProgress = false;
+
+// Team cache system
+let teamDataCache = {};
+let loadingTeams = new Set(); // Track teams currently being loaded
+
+// Challenge attempts cache
+let challengeAttemptsCache = {};
+window.challengeAttemptsCache = challengeAttemptsCache;
+
+// Team submissions cache (all submissions for a team)
+let teamSubmissionsCache = {};
+window.teamSubmissionsCache = teamSubmissionsCache;
+
+// Team sorting
+let teamSortMode = 'score'; // 'score' or 'name'
+let showOnlySelected = false; // Toggle pour n'afficher que les équipes sélectionnées
+
+// Challenge drag & drop variables
+let isDraggingChallenge = false;
+let draggedChallengeId = null;
+let customPositions = {}; // Store custom positions
+
+// Debug mode for dependency troubleshooting
+let debugMode = true; // Set to false to reduce console noise
+
+// Debug logging helper
+function debugLog(...args) {
+    if (debugMode) {
+        console.log(...args);
+    }
+}
+
+function debugWarn(...args) {
+    if (debugMode) {
+        console.warn(...args);
+    }
+}
+
+function debugError(...args) {
+    if (debugMode) {
+        console.error(...args);
+    }
+}
+
+// ==================== CHALLENGE SOLVES MODAL ====================
+
+async function showChallengeSolvesModal(challengeId) {
+    const challenge = challengeMap[challengeId];
+    if (!challenge) return;
+    
+    // Créer ou récupérer la modale
+    let modal = document.getElementById('challenge-solves-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'challenge-solves-modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        `;
+        modal.onclick = (e) => {
+            if (e.target === modal) closeChallengeModal();
+        };
+        document.body.appendChild(modal);
+    }
+    
+    // Créer le contenu de la modale
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 24px;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        position: relative;
+    `;
+    
+    modalContent.innerHTML = `
+        <button onclick="closeChallengeModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 20px; cursor: pointer;">✕</button>
+        <h2 style="margin-bottom: 16px; font-size: 20px;">📊 ${challenge.name}</h2>
+        <div style="margin-bottom: 20px; color: #6b7280; font-size: 14px;">
+            <span style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; margin-right: 8px;">${challenge.category}</span>
+            <span>${challenge.points} points</span>
+        </div>
+        <div id="solves-loading" style="text-align: center; padding: 40px;">
+            <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+            <div>Chargement des résolutions...</div>
+        </div>
+        <div id="solves-content" style="display: none;"></div>
+    `;
+    
+    modal.innerHTML = '';
+    modal.appendChild(modalContent);
+    modal.style.display = 'flex';
+    
+    // Charger les données de résolution
+    await loadChallengeSolves(challengeId);
+}
+
+async function loadChallengeSolves(challengeId) {
+    try {
+        const challenge = challengeMap[challengeId];
+        console.log('🔍 loadChallengeSolves:', {
+            challengeId,
+            challenge,
+            isAdmin: userPermissions.isAdmin,
+            selectedTeams,
+            teamProgressKeys: Object.keys(teamProgress)
+        });
+        
+        // Si on est en mode utilisateur (pas admin), utiliser les données depuis teamProgress
+        if (!userPermissions.isAdmin) {
+            // Pour un utilisateur normal, afficher uniquement son équipe
+            const teamName = currentUser.teamName;
+            if (teamName && teamProgress[teamName] && teamProgress[teamName][challengeId]) {
+                const solve = teamProgress[teamName][challengeId];
+                if (solve.status === 'solved') {
+                    const team = teams.find(t => t.name === teamName);
+                    const solveDate = new Date(solve.date);
+                    
+                    // Calculer le temps relatif depuis le premier solve
+                    let relativeTime = null;
+                    let relativeTimeStr = '';
+                    const firstSolve = findFirstSolveForTeam(teamName);
+                    if (firstSolve) {
+                        relativeTime = solveDate - new Date(firstSolve.date);
+                        relativeTimeStr = formatTimeDiff(relativeTime);
+                    }
+                    
+                    const solveData = [{
+                        team: teamName,
+                        teamColor: team ? team.color : '#6b7280',
+                        date: solveDate,
+                        dateStr: formatDate(solveDate),
+                        place: 1,
+                        timeDiff: null,
+                        timeDiffStr: '',
+                        timeFromPrevChall: null,
+                        timeFromPrevChallStr: '',
+                        relativeTime,
+                        relativeTimeStr,
+                        attempts: 1
+                    }];
+                    
+                    // Calculer le temps depuis le challenge précédent
+                    const prevChallSolve = findPreviousSolveForTeam(teamName, challengeId, solveDate);
+                    if (prevChallSolve) {
+                        solveData[0].timeFromPrevChall = solveDate - new Date(prevChallSolve.date);
+                        solveData[0].timeFromPrevChallStr = formatTimeDiff(solveData[0].timeFromPrevChall);
+                    }
+                    
+                    displayChallengeSolves(solveData, challengeId);
+                    return;
+                }
+            }
+            
+            // Pas de solve pour cet utilisateur
+            displayChallengeSolves([], challengeId);
+            return;
+        }
+        
+        // Mode admin : afficher uniquement les équipes sélectionnées
+        const solvesData = [];
+        const selectedTeamSolves = [];
+        
+        console.log('📊 Mode admin - Recherche des solves pour les équipes sélectionnées');
+        
+        // Charger les tentatives pour ce challenge (si disponible)
+        let challengeAttempts = {};
+        try {
+            challengeAttempts = await loadChallengeAttempts(challengeId);
+        } catch (error) {
+            console.error('Erreur chargement tentatives:', error);
+            // Continuer sans les tentatives
+        }
+        
+        // Collecter les solves des équipes sélectionnées depuis teamProgress
+        for (const teamName of selectedTeams) {
+            console.log(`  Checking team: ${teamName}`, {
+                hasTeamProgress: !!teamProgress[teamName],
+                hasChallengeProgress: !!(teamProgress[teamName] && teamProgress[teamName][challengeId]),
+                challengeData: teamProgress[teamName] ? teamProgress[teamName][challengeId] : null
+            });
+            
+            if (teamProgress[teamName] && teamProgress[teamName][challengeId]) {
+                const solve = teamProgress[teamName][challengeId];
+                if (solve.status === 'solved') {
+                    selectedTeamSolves.push({
+                        teamName,
+                        solve,
+                        date: new Date(solve.date)
+                    });
+                    console.log(`    ✅ Team ${teamName} solved this challenge`);
+                }
+            }
+        }
+        
+        // Trier par date
+        selectedTeamSolves.sort((a, b) => a.date - b.date);
+        
+        // Construire les données avec calcul des temps
+        selectedTeamSolves.forEach((teamSolve, index) => {
+            const team = teams.find(t => t.name === teamSolve.teamName);
+            
+            // Calculer le temps depuis le solve précédent (parmi les équipes sélectionnées)
+            let timeDiff = null;
+            let timeDiffStr = '';
+            if (index > 0) {
+                timeDiff = teamSolve.date - selectedTeamSolves[index - 1].date;
+                timeDiffStr = formatTimeDiff(timeDiff);
+            }
+            
+            // Calculer le temps depuis le challenge précédent pour cette équipe
+            let timeFromPrevChall = null;
+            let timeFromPrevChallStr = '';
+            const prevChallSolve = findPreviousSolveForTeam(teamSolve.teamName, challengeId, teamSolve.date);
+            if (prevChallSolve) {
+                timeFromPrevChall = teamSolve.date - new Date(prevChallSolve.date);
+                timeFromPrevChallStr = formatTimeDiff(timeFromPrevChall);
+            }
+            
+            // Calculer le temps relatif depuis le premier solve de l'équipe
+            let relativeTime = null;
+            let relativeTimeStr = '';
+            const firstSolve = findFirstSolveForTeam(teamSolve.teamName);
+            if (firstSolve) {
+                relativeTime = teamSolve.date - new Date(firstSolve.date);
+                relativeTimeStr = formatTimeDiff(relativeTime);
+            }
+            
+            solvesData.push({
+                team: teamSolve.teamName,
+                teamColor: team ? team.color : '#6b7280',
+                date: teamSolve.date,
+                dateStr: formatDate(teamSolve.date),
+                place: index + 1,
+                timeDiff,
+                timeDiffStr,
+                timeFromPrevChall,
+                timeFromPrevChallStr,
+                relativeTime,
+                relativeTimeStr,
+                attempts: (challengeAttempts && challengeAttempts[teamSolve.teamName]) || 1 // Utiliser les vraies tentatives ou 1 par défaut
+            });
+        });
+        
+        // Afficher les résultats
+        displayChallengeSolves(solvesData, challengeId);
+        
+    } catch (error) {
+        console.error('Erreur chargement solves:', error);
+        document.getElementById('solves-loading').innerHTML = `
+            <div style="color: #ef4444;">❌ Erreur de chargement</div>
+            <div style="font-size: 12px; margin-top: 8px; color: #dc2626;">
+                ${error.message || 'Erreur inconnue'}
+            </div>
+            <div style="font-size: 11px; margin-top: 8px; color: #7f1d1d;">
+                Vérifiez la console pour plus de détails
+            </div>
+        `;
+    }
+}
+
+function findPreviousSolveForTeam(teamName, currentChallengeId, currentSolveDate) {
+    const teamSolves = teamProgress[teamName];
+    if (!teamSolves) return null;
+    
+    // Chercher le solve le plus récent avant la date actuelle (peu importe les dépendances)
+    let mostRecentSolve = null;
+    let mostRecentDate = null;
+    
+    for (const [challId, progress] of Object.entries(teamSolves)) {
+        // Ignorer le challenge actuel et les non-résolus
+        if (challId === currentChallengeId || progress.status !== 'solved') continue;
+        
+        const solveDate = new Date(progress.date);
+        // Chercher les solves qui sont avant la date actuelle
+        if (solveDate < currentSolveDate) {
+            if (!mostRecentDate || solveDate > mostRecentDate) {
+                mostRecentSolve = { challengeId: challId, ...progress };
+                mostRecentDate = solveDate;
+            }
+        }
+    }
+    
+    return mostRecentSolve;
+}
+
+// Trouver le premier solve d'une équipe (pour calculer le temps relatif)
+function findFirstSolveForTeam(teamName) {
+    const teamSolves = teamProgress[teamName];
+    if (!teamSolves) return null;
+    
+    let firstSolve = null;
+    let firstSolveDate = null;
+    
+    for (const [challId, progress] of Object.entries(teamSolves)) {
+        if (progress.status === 'solved' && progress.date) {
+            const solveDate = new Date(progress.date);
+            if (!firstSolveDate || solveDate < firstSolveDate) {
+                firstSolve = { challengeId: challId, ...progress };
+                firstSolveDate = solveDate;
+            }
+        }
+    }
+    
+    return firstSolve;
+}
+
+function displayChallengeSolves(solvesData, challengeId) {
+    const content = document.getElementById('solves-content');
+    const loading = document.getElementById('solves-loading');
+    const challenge = challengeMap[challengeId];
+    
+    if (solvesData.length === 0) {
+        loading.innerHTML = `
+            <div style="text-align: center; padding: 40px;">
+                <div style="font-size: 48px; margin-bottom: 16px;">🏳️</div>
+                <div style="color: #6b7280; font-size: 16px;">
+                    ${userPermissions.isAdmin ? 
+                        'Aucune équipe sélectionnée n\'a résolu ce challenge' : 
+                        'Votre équipe n\'a pas encore résolu ce challenge'}
+                </div>
+                ${userPermissions.isAdmin && selectedTeams.length === 0 ? 
+                    '<div style="margin-top: 8px; font-size: 14px; color: #9ca3af;">Sélectionnez des équipes dans la sidebar pour voir leurs résolutions</div>' : ''}
+            </div>
+        `;
+        return;
+    }
+    
+    // Statistiques de résolution
+    let averageTime = 0;
+    if (solvesData.length > 0 && challenge.dependencies.length > 0) {
+        const validTimes = solvesData.filter(s => s.timeFromPrevChall).map(s => s.timeFromPrevChall);
+        if (validTimes.length > 0) {
+            averageTime = validTimes.reduce((a, b) => a + b, 0) / validTimes.length;
+        }
+    }
+    
+    content.innerHTML = `
+        <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-size: 16px; font-weight: 600; color: #0369a1;">
+                        🏆 ${solvesData.length} résolution${solvesData.length > 1 ? 's' : ''}
+                    </div>
+                    ${userPermissions.isAdmin ? 
+                        `<div style="font-size: 12px; color: #0c4a6e; margin-top: 4px;">
+                            Parmi les ${selectedTeams.length} équipe(s) sélectionnée(s)
+                        </div>` : ''}
+                </div>
+                ${averageTime > 0 ? `
+                    <div style="text-align: right;">
+                        <div style="font-size: 12px; color: #0c4a6e;">Temps moyen depuis le précédent chall</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #0369a1;">${formatTimeDiff(averageTime)}</div>
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+        
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            ${solvesData.map((solve, idx) => `
+                <div style="background: #f9fafb; 
+                           border: 1px solid #e5e7eb; 
+                           border-radius: 8px; 
+                           padding: 16px;
+                           transition: all 0.2s;">
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div style="flex: 1;">
+                            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                                <span style="font-weight: 700; 
+                                           font-size: 20px; 
+                                           color: #374151;">
+                                    #${solve.place}
+                                </span>
+                                <div style="width: 16px; height: 16px; background: ${solve.teamColor}; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.2);"></div>
+                                <span style="font-weight: 600; font-size: 16px; color: #111827;">${solve.team}</span>
+                                ${solve.attempts > 1 ? `
+                                    <span style="background: #fee2e2; color: #dc2626; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500;">
+                                        ${solve.attempts - 1} fail${solve.attempts > 2 ? 's' : ''}
+                                    </span>
+                                ` : ''}
+                            </div>
+                            <div style="font-size: 14px; color: #6b7280;">
+                                📅 ${solve.dateStr}
+                            </div>
+                        </div>
+                        <div style="text-align: right; min-width: 160px;">
+                            ${solve.relativeTimeStr ? `
+                                <div style="background: #f3e8ff; 
+                                          border: 1px solid #c084fc;
+                                          border-radius: 6px; 
+                                          padding: 4px 8px;
+                                          margin-bottom: 4px;">
+                                    <div style="font-size: 10px; color: #6b21a8; font-weight: 500;">Temps relatif</div>
+                                    <div style="font-size: 14px; color: #581c87; font-weight: 600;">${solve.relativeTimeStr}</div>
+                                </div>
+                            ` : ''}
+                            ${solve.timeFromPrevChallStr ? `
+                                <div style="background: #dbeafe; 
+                                          border: 1px solid #93c5fd;
+                                          border-radius: 6px; 
+                                          padding: 4px 8px;
+                                          margin-bottom: 4px;">
+                                    <div style="font-size: 10px; color: #1e40af; font-weight: 500;">Depuis dernier chall</div>
+                                    <div style="font-size: 14px; color: #1e3a8a; font-weight: 600;">${solve.timeFromPrevChallStr}</div>
+                                </div>
+                            ` : ''}
+                            ${solve.timeDiffStr && solve.place > 1 ? `
+                                <div style="background: #d1fae5; 
+                                          border: 1px solid #6ee7b7;
+                                          border-radius: 6px; 
+                                          padding: 4px 8px;">
+                                    <div style="font-size: 10px; color: #047857; font-weight: 500;">Δ équipe préc.</div>
+                                    <div style="font-size: 14px; color: #065f46; font-weight: 600;">+${solve.timeDiffStr}</div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    
+    loading.style.display = 'none';
+    content.style.display = 'block';
+}
+
+function formatTimeDiff(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) return `${days}j ${hours % 24}h`;
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
+}
+
+function formatDate(date) {
+    const options = { 
+        day: '2-digit', 
+        month: '2-digit', 
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    };
+    return date.toLocaleString('fr-FR', options);
+}
+
+function closeChallengeModal() {
+    const modal = document.getElementById('challenge-solves-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Charger toutes les submissions d'une équipe
+async function loadTeamSubmissions(teamId) {
+    if (teamSubmissionsCache[teamId]) {
+        console.log(`📦 Submissions depuis cache pour team ${teamId}`);
+        return teamSubmissionsCache[teamId];
+    }
+    
+    try {
+        console.log(`🔄 Chargement des submissions pour team ${teamId}...`);
+        const response = await callCTFdAPI(`/api/v1/teams/${teamId}/fails?per_page=100`);
+        
+        if (response && response.data) {
+            // Organiser les submissions par challenge
+            const submissionsByChallenge = {};
+            
+            response.data.forEach(submission => {
+                const challengeId = submission.challenge_id;
+                if (!submissionsByChallenge[challengeId]) {
+                    submissionsByChallenge[challengeId] = 0;
+                }
+                submissionsByChallenge[challengeId]++;
+            });
+            
+            teamSubmissionsCache[teamId] = submissionsByChallenge;
+            console.log(`✅ Submissions chargées pour team ${teamId}:`, submissionsByChallenge);
+            return submissionsByChallenge;
+        }
+    } catch (error) {
+        console.warn(`⚠️ Impossible de charger les submissions pour team ${teamId}:`, error.message);
+    }
+    
+    return {};
+}
+
+// Charger les tentatives pour un challenge (submissions incorrectes + correcte)
+async function loadChallengeAttempts(challengeId) {
+    // Créer une clé de cache qui inclut les équipes sélectionnées
+    const selectedTeamsKey = selectedTeams.sort().join(',');
+    const cacheKey = `${challengeId}_${selectedTeamsKey}`;
+    
+    // Vérifier le cache d'abord
+    if (challengeAttemptsCache[cacheKey]) {
+        console.log('📊 Tentatives depuis cache:', challengeAttemptsCache[cacheKey]);
+        return challengeAttemptsCache[cacheKey];
+    }
+    
+    const attempts = {};
+    
+    // Utiliser les données de submissions déjà chargées
+    for (const teamName of selectedTeams) {
+        if (teamProgress[teamName] && 
+            teamProgress[teamName][challengeId] && 
+            teamProgress[teamName][challengeId].status === 'solved') {
+            
+            const team = teams.find(t => t.name === teamName);
+            if (team && team.id && teamSubmissionsCache[team.id]) {
+                const failsForChallenge = teamSubmissionsCache[team.id][challengeId] || 0;
+                // Nombre total de tentatives = fails + 1 (la réussite)
+                attempts[teamName] = failsForChallenge + 1;
+            } else {
+                // Par défaut, 1 tentative (succès direct)
+                attempts[teamName] = 1;
+            }
+        }
+    }
+    
+    // Mettre en cache avec la clé qui inclut les équipes sélectionnées
+    challengeAttemptsCache[cacheKey] = attempts;
+    
+    console.log('📊 Tentatives générées et mises en cache:', attempts);
+    return attempts;
+    
+    /* Version réelle avec l'API CTFd (à implémenter):
+    try {
+        const response = await callCTFdAPI(`/api/v1/submissions?challenge_id=${challengeId}`);
+        const submissions = response.data || [];
+        
+        // Compter les tentatives par équipe
+        submissions.forEach(sub => {
+            const teamName = teams.find(t => t.id === sub.team_id)?.name;
+            if (teamName) {
+                attempts[teamName] = (attempts[teamName] || 0) + 1;
+            }
+        });
+        
+        return attempts;
+    } catch (error) {
+        console.error('Erreur chargement tentatives:', error);
+        return {};
+    }
+    */
+}
+
+// Validation function to test dependency logic
+function validateDependencyLogic() {
+    debugLog('🧪 TESTING DEPENDENCY LOGIC WITH KNOWN DATA...');
+    
+    // Create test challenge map
+    const testMap = {
+        '1': { name: 'Root A', dependencies: [], points: 100 },
+        '2': { name: 'Root B', dependencies: [], points: 100 },
+        '3': { name: 'Level 1 A', dependencies: ['1'], points: 200 },
+        '4': { name: 'Level 1 B', dependencies: ['2'], points: 200 },
+        '5': { name: 'Level 2', dependencies: ['3', '4'], points: 300 }
+    };
+    
+    const testLevels = {};
+    debugLog('🧪 Test challenge map:', testMap);
+    
+    Object.keys(testMap).forEach(id => {
+        const level = calculateChallengeLevel(id, testMap, testLevels);
+        debugLog(`🧪 Test result: ${testMap[id].name} → Level ${level}`);
+    });
+    
+    debugLog('🧪 Expected levels: Root A=0, Root B=0, Level 1 A=1, Level 1 B=1, Level 2=2');
+    debugLog('🧪 Actual levels:', testLevels);
+    
+    const isValid = testLevels['1'] === 0 && testLevels['2'] === 0 && 
+                   testLevels['3'] === 1 && testLevels['4'] === 1 && 
+                   testLevels['5'] === 2;
+    
+    debugLog(`🧪 Dependency logic test: ${isValid ? '✅ PASSED' : '❌ FAILED'}`);
+    
+    return isValid;
+}
+
+// ==================== NOTIFICATION SYSTEM REMOVED ====================
+// All notifications now use console.log instead
+
+// ==================== TEAM CACHE SYSTEM ====================
+// Lazy loading system for team data
+
+function getCachedTeamData(teamName) {
+    return teamDataCache[teamName] || null;
+}
+
+function setCachedTeamData(teamName, data) {
+    teamDataCache[teamName] = {
+        data: data,
+        timestamp: Date.now()
+    };
+}
+
+function isCacheValid(teamName, maxAge = 5 * 60 * 1000) { // 5 minutes default
+    const cached = teamDataCache[teamName];
+    if (!cached) return false;
+    return (Date.now() - cached.timestamp) < maxAge;
+}
+
+function clearTeamCache(teamName = null) {
+    if (teamName) {
+        delete teamDataCache[teamName];
+    } else {
+        teamDataCache = {};
+    }
+}
+
+async function loadTeamDataLazy(teamName) {
+    // Check if already loading
+    if (loadingTeams.has(teamName)) {
+        console.log(`Team ${teamName} is already being loaded...`);
+        return;
+    }
+    
+    // Check cache first
+    if (isCacheValid(teamName)) {
+        debugLog(`📋 Using cached data for team ${teamName}`);
+        const cached = getCachedTeamData(teamName);
+        return cached.data;
+    }
+    
+    // Start loading
+    loadingTeams.add(teamName);
+    console.log(`Loading data for team ${teamName}...`);
+    
+    try {
+        debugLog(`🔄 Loading fresh data for team ${teamName}`);
+        
+        // In demo mode, generate mock data
+        if (!isConnected || currentUser.token === 'demo') {
+            await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1000)); // Simulate delay
+            generateMockProgressDataForTeam(teamName);
+            const mockData = teamProgress[teamName];
+            setCachedTeamData(teamName, mockData);
+            
+            console.log(`Team ${teamName} data loaded successfully`);
+            return mockData;
+        }
+        
+        // Charger les solves depuis l'API CTFd
+        const team = teams.find(t => t.name === teamName);
+        if (!team) {
+            throw new Error(`Team ${teamName} not found`);
+        }
+        
+        try {
+            const solvesResponse = await callCTFdAPI(`/api/v1/teams/${team.id}/solves`);
+            const solves = solvesResponse.data || [];
+            
+            // Construire teamProgress pour cette équipe
+            if (!teamProgress[teamName]) {
+                teamProgress[teamName] = {};
+            }
+            
+            // Réinitialiser et remplir avec les solves
+            for (const solve of solves) {
+                const challId = solve.challenge_id;
+                if (challengeMap[challId]) {
+                    teamProgress[teamName][challId] = {
+                        status: 'solved',
+                        date: solve.date,
+                        points: challengeMap[challId].points
+                    };
+                }
+            }
+            
+            // Marquer les challenges non résolus
+            for (const challId in challengeMap) {
+                if (!teamProgress[teamName][challId]) {
+                    teamProgress[teamName][challId] = {
+                        status: 'unsolved',
+                        date: null,
+                        points: 0
+                    };
+                }
+            }
+            
+            const data = teamProgress[teamName];
+            setCachedTeamData(teamName, data);
+            
+            console.log(`✅ Team ${teamName} solves loaded: ${solves.length} challenges solved`);
+            return data;
+            
+        } catch (error) {
+            console.error(`Erreur chargement solves pour ${teamName}:`, error);
+            // En cas d'erreur, initialiser avec des données vides
+            teamProgress[teamName] = {};
+            throw error;
+        }
+        
+    } catch (error) {
+        console.error(`Failed to load data for team ${teamName}: ${error.message}`);
+        throw error;
+    } finally {
+        loadingTeams.delete(teamName);
+    }
+}
+
+// ==================== CHALLENGE DRAG & DROP SYSTEM ====================
+
+function initializeDragAndDrop() {
+    // Load custom positions from session storage
+    const savedPositions = sessionStorage.getItem('customChallengePositions');
+    if (savedPositions) {
+        try {
+            customPositions = JSON.parse(savedPositions);
+            debugLog('📍 Loaded custom positions from session storage');
+        } catch (e) {
+            debugLog('⚠️ Failed to load custom positions from session storage');
+        }
+    }
+}
+
+function saveCustomPositions() {
+    sessionStorage.setItem('customChallengePositions', JSON.stringify(customPositions));
+    debugLog('💾 Saved custom positions to session storage');
+}
+
+function resetChallengePositions() {
+    customPositions = {};
+    sessionStorage.removeItem('customChallengePositions');
+    console.log('Challenge positions reset to automatic layout');
+    
+    // Recalculate and redraw
+    if (Object.keys(challengeMap).length > 0) {
+        updateDemoChallengePositions();
+        
+        // Use D3 rendering if available and ready
+        if (d3SystemReady && window.renderD3Challenges && typeof isD3Ready === 'function' && isD3Ready()) {
+            try {
+                renderD3Challenges();
+            } catch (error) {
+                console.error('❌ D3 rendering failed:', error);
+                console.log('🔄 Falling back to legacy rendering');
+                renderChallenges();
+                updateDependencyArrows();
+            }
+        } else {
+            renderChallenges();
+            updateDependencyArrows();
+        }
+    }
+}
+
+function makeChallengeNodeDraggable(element, challengeId) {
+    let isDragging = false;
+    let startX, startY, initialX, initialY;
+    
+    const startDrag = (e) => {
+        if (e.target.closest('.challenge-status')) return; // Don't drag from status icon
+        
+        isDragging = true;
+        isDraggingChallenge = true;
+        draggedChallengeId = challengeId;
+        
+        const rect = element.getBoundingClientRect();
+        const containerRect = document.getElementById('transform-wrapper').getBoundingClientRect();
+        
+        startX = (e.clientX || e.touches[0].clientX);
+        startY = (e.clientY || e.touches[0].clientY);
+        
+        initialX = rect.left - containerRect.left;
+        initialY = rect.top - containerRect.top;
+        
+        element.style.cursor = 'grabbing';
+        element.style.zIndex = '1000';
+        element.style.transform = 'scale(1.05)';
+        element.style.boxShadow = '0 12px 24px rgba(0,0,0,0.3)';
+        
+        e.preventDefault();
+    };
+    
+    const drag = (e) => {
+        if (!isDragging) return;
+        
+        const currentX = (e.clientX || e.touches[0].clientX);
+        const currentY = (e.clientY || e.touches[0].clientY);
+        
+        const deltaX = currentX - startX;
+        const deltaY = currentY - startY;
+        
+        const newX = initialX + deltaX / currentZoom;
+        const newY = initialY + deltaY / currentZoom;
+        
+        element.style.left = `${newX}px`;
+        element.style.top = `${newY}px`;
+        
+        // Update dependency arrows in real-time
+        updateDependencyArrows();
+        
+        e.preventDefault();
+    };
+    
+    const endDrag = (e) => {
+        if (!isDragging) return;
+        
+        isDragging = false;
+        isDraggingChallenge = false;
+        draggedChallengeId = null;
+        
+        element.style.cursor = 'grab';
+        element.style.zIndex = '10';
+        element.style.transform = 'scale(1)';
+        element.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)';
+        
+        // Save new position
+        const rect = element.getBoundingClientRect();
+        const containerRect = document.getElementById('transform-wrapper').getBoundingClientRect();
+        
+        const finalX = rect.left - containerRect.left;
+        const finalY = rect.top - containerRect.top;
+        
+        customPositions[challengeId] = { x: finalX, y: finalY };
+        challengeMap[challengeId].position = { x: finalX, y: finalY };
+        
+        saveCustomPositions();
+        console.log(`Challenge "${challengeMap[challengeId].name}" position saved`);
+        
+        e.preventDefault();
+    };
+    
+    // Mouse events
+    element.addEventListener('mousedown', startDrag);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', endDrag);
+    
+    // Touch events
+    element.addEventListener('touchstart', startDrag, { passive: false });
+    document.addEventListener('touchmove', drag, { passive: false });
+    document.addEventListener('touchend', endDrag, { passive: false });
+    
+    // Set initial cursor
+    element.style.cursor = 'grab';
+}
+
+// Variables pour la navigation et le zoom
+let currentZoom = 1;
+let currentPan = { x: 0, y: 0 };
+let isDragging = false;
+let dragStart = { x: 0, y: 0 };
+let lastPan = { x: 0, y: 0 };
+
+// Fonction pour gérer la pagination automatiquement
+async function callCTFdAPIWithPagination(endpoint, method = 'GET') {
+    let allData = [];
+    let page = 1;
+    let hasMore = true;
+    
+    while (hasMore) {
+        const separator = endpoint.includes('?') ? '&' : '?';
+        const paginatedEndpoint = `${endpoint}${separator}page=${page}`;
+        
+        try {
+            const response = await callCTFdAPI(paginatedEndpoint, method);
+            
+            if (response.data && Array.isArray(response.data)) {
+                allData = allData.concat(response.data);
+                
+                // Vérifier s'il y a plus de pages
+                if (response.meta && response.meta.pagination) {
+                    const pagination = response.meta.pagination;
+                    hasMore = pagination.page < pagination.pages;
+                    console.log(`Page ${pagination.page}/${pagination.pages}`);
+                } else {
+                    // Si pas de métadonnées de pagination, on suppose qu'il n'y a qu'une page
+                    hasMore = false;
+                }
+            } else {
+                // Pas un tableau, on retourne tel quel
+                return response;
+            }
+            
+            page++;
+        } catch (error) {
+            console.error('Erreur pagination page', page, ':', error);
+            hasMore = false;
+        }
+    }
+    
+    console.log(`Pagination terminée pour ${endpoint}: ${allData.length} éléments récupérés`);
+    return { data: allData };
+}
+
+// Configuration des challenges avec leurs dépendances (positions seront recalculées)
+let challengeMap = {
+    'osint-start': { name: 'Reconnaissance Passive', position: { x: 0, y: 0 }, dependencies: [], points: 50, category: 'OSINT' },
+    'google-dork': { name: 'Google Dorking', position: { x: 0, y: 0 }, dependencies: ['osint-start'], points: 100, category: 'OSINT' },
+    'whois-investigation': { name: 'WHOIS Investigation', position: { x: 0, y: 0 }, dependencies: ['osint-start'], points: 100, category: 'OSINT' },
+    'social-media': { name: 'Social Media Hunt', position: { x: 0, y: 0 }, dependencies: ['google-dork'], points: 150, category: 'OSINT' },
+    'email-investigation': { name: 'Email Investigation', position: { x: 0, y: 0 }, dependencies: ['google-dork', 'whois-investigation'], points: 200, category: 'OSINT' },
+    'dns-enum': { name: 'DNS Enumeration', position: { x: 0, y: 0 }, dependencies: ['whois-investigation'], points: 150, category: 'Network' },
+    'geolocation': { name: 'Geolocation Analysis', position: { x: 0, y: 0 }, dependencies: ['social-media'], points: 250, category: 'OSINT' },
+    'metadata': { name: 'Metadata Extraction', position: { x: 0, y: 0 }, dependencies: ['social-media', 'email-investigation'], points: 200, category: 'Forensics' },
+    'subdomain': { name: 'Subdomain Discovery', position: { x: 0, y: 0 }, dependencies: ['dns-enum', 'email-investigation'], points: 300, category: 'Network' },
+    'deepweb': { name: 'Deep Web Search', position: { x: 0, y: 0 }, dependencies: ['dns-enum'], points: 350, category: 'OSINT' },
+    'timeline': { name: 'Timeline Construction', position: { x: 0, y: 0 }, dependencies: ['geolocation', 'metadata'], points: 400, category: 'Analysis' },
+    'network-map': { name: 'Network Mapping', position: { x: 0, y: 0 }, dependencies: ['subdomain', 'metadata'], points: 450, category: 'Network' },
+    'advanced-osint': { name: 'Advanced OSINT', position: { x: 0, y: 0 }, dependencies: ['subdomain', 'deepweb'], points: 500, category: 'OSINT' },
+    'final-investigation': { name: 'Final Investigation', position: { x: 0, y: 0 }, dependencies: ['timeline', 'network-map', 'advanced-osint'], points: 1000, category: 'Final' }
+};
+
+// Fonction pour recalculer les positions des challenges de démo avec logique hiérarchique correcte
+function updateDemoChallengePositions() {
+    console.log('=== RECALCUL DES POSITIONS DÉMO ===');
+    
+    // Calculer les niveaux hiérarchiques avec la nouvelle logique
+    const levels = {};
+    const visited = new Set();
+    
+    console.log('Challenges disponibles:', Object.keys(challengeMap));
+    
+    Object.keys(challengeMap).forEach(challengeId => {
+        visited.clear(); // Reset visited pour chaque calcul de niveau principal
+        const level = calculateChallengeLevel(challengeId, challengeMap, levels, visited);
+        console.log(`${challengeMap[challengeId].name}: niveau ${level}`);
+    });
+    
+    // Grouper par niveau
+    const levelGroups = {};
+    const maxLevel = Math.max(...Object.values(levels), 0);
+    
+    console.log(`Niveau maximum calculé: ${maxLevel}`);
+    
+    // Initialiser les groupes de niveaux
+    for (let level = 0; level <= maxLevel; level++) {
+        levelGroups[level] = [];
+    }
+    
+    // Assigner chaque challenge à son niveau
+    Object.entries(challengeMap).forEach(([challengeId, challenge]) => {
+        const level = levels[challengeId] || 0;
+        levelGroups[level].push(challengeId);
+        console.log(`${challenge.name} assigné au niveau ${level}`);
+    });
+    
+    // Afficher la distribution finale
+    for (let level = 0; level <= maxLevel; level++) {
+        const challenges = levelGroups[level];
+        console.log(`Niveau ${level}: ${challenges.length} challenges - [${challenges.map(id => challengeMap[id].name).join(', ')}]`);
+    }
+    
+    // ✅ CONSISTENT POSITIONING ALGORITHM - MATCHES MAIN ALGORITHM
+    const CANVAS_WIDTH = 1400;
+    const LEVEL_HEIGHT = 200;
+    const CHALLENGE_WIDTH = 140;
+    const START_Y = 60;        // Level 0 at TOP
+    const MIN_SPACING = 180;
+    
+    console.log('=== ✅ DEMO POSITIONING - TOP-DOWN HIERARCHY ===');
+    
+    for (let level = 0; level <= maxLevel; level++) {
+        const challenges = levelGroups[level];
+        if (challenges.length === 0) continue;
+        
+        // ✅ CORRECT: Level 0 = TOP (smallest Y), higher levels = BOTTOM (larger Y)
+        const y = START_Y + (level * LEVEL_HEIGHT);
+        
+        // Smart horizontal distribution
+        let spacing, startX;
+        
+        if (challenges.length === 1) {
+            // Single challenge: center horizontally
+            startX = (CANVAS_WIDTH - CHALLENGE_WIDTH) / 2;
+            spacing = 0;
+        } else {
+            // Multiple challenges: distribute with optimal spacing
+            const totalWidth = CANVAS_WIDTH - 160;
+            const optimalSpacing = totalWidth / (challenges.length - 1);
+            spacing = Math.max(MIN_SPACING, Math.min(optimalSpacing, 350));
+            
+            const totalUsedWidth = (challenges.length - 1) * spacing;
+            startX = (CANVAS_WIDTH - totalUsedWidth) / 2;
+        }
+        
+        const levelType = level === 0 ? 'ROOT' : `LEVEL-${level}`;
+        console.log(`📍 ${levelType} ${level}: ${challenges.length} challenges at Y=${y}, startX=${startX}, spacing=${spacing || 'N/A'}`);
+        
+        // Position each challenge
+        challenges.forEach((challengeId, index) => {
+            const x = challenges.length === 1 ? startX : startX + (index * spacing);
+            
+            challengeMap[challengeId].position = {
+                x: Math.round(x),
+                y: y
+            };
+            
+            console.log(`  ✅ ${challengeMap[challengeId].name}: (${challengeMap[challengeId].position.x}, ${challengeMap[challengeId].position.y})`);
+        });
+    }
+    
+    console.log('✓ Positions des challenges de démo mises à jour');
+    console.log('Niveaux finaux:', levels);
+    
+    // Vérification finale
+    Object.entries(challengeMap).forEach(([id, challenge]) => {
+        console.log(`${challenge.name}: Niveau ${levels[id]}, Position (${challenge.position.x}, ${challenge.position.y}), Dépendances: [${challenge.dependencies.join(', ')}]`);
+    });
+}
+
+// Initialiser les positions des challenges de démo
+updateDemoChallengePositions();
+
+function showCORSInstructions() {
+    const instructions = 
+`🔧 SOLUTIONS POUR CORRIGER L'ERREUR CORS :
+
+1. 📡 PROXY CORS (Solution rapide)
+   • Ajoutez "https://cors-anywhere.herokuapp.com/" devant votre URL CTFd
+   • Exemple: https://cors-anywhere.herokuapp.com/https://demo.ctfd.io
+   • ⚠️ À utiliser uniquement pour les tests
+
+2. 🔌 EXTENSION NAVIGATEUR (Recommandé pour le développement)
+   • Chrome: "CORS Unblock" ou "Disable CORS"
+   • Firefox: "CORS Everywhere" 
+   • ⚠️ Désactivez après utilisation
+
+3. ⚙️ CONFIGURATION CTFD (Solution permanente)
+   Ajoutez dans la configuration CTFd:
+   • Access-Control-Allow-Origin: *
+   • Access-Control-Allow-Headers: Authorization, Content-Type
+   • Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+
+4. 🏠 HÉBERGEMENT LOCAL (Solution pro)
+   • Hébergez cette page sur le même domaine que CTFd
+   • Ou utilisez un reverse proxy (nginx, Apache)
+
+5. 📱 ALTERNATIVE API
+   • Utilisez l'interface CTFd directement
+   • Ou développez un backend intermédiaire`;
+    
+    console.log(instructions);
+}
+
+function showError(message) {
+    const errorElement = document.getElementById('api-error');
+    errorElement.innerHTML = `<strong>Erreur :</strong> ${message}`;
+    errorElement.style.display = 'block';
+}
+
+function showLoginLoader(message = 'Chargement...') {
+    const loader = document.getElementById('login-loading');
+    const messageElement = document.getElementById('loading-message');
+    if (loader) {
+        loader.style.display = 'flex';
+        if (messageElement) {
+            messageElement.textContent = message;
+        }
+    }
+}
+
+function hideLoginLoader() {
+    const loader = document.getElementById('login-loading');
+    if (loader) {
+        loader.style.display = 'none';
+    }
+}
+
+function toggleLoginFields() {
+    // Plus besoin de cette fonction, le token détermine tout
+}
+
+function loadTeamsList() {
+    // Simulation de la liste des équipes depuis CTFd
+    const teamSelect = document.getElementById('team-select');
+    const demoTeams = [
+        'CyberDetectives', 'InfoHunters', 'DigitalSleuth', 'TrackMasters', 
+        'DataHounds', 'NetTrackers', 'SearchExperts', 'IntelGatherers'
+    ];
+    
+    if (teamSelect) {
+        teamSelect.innerHTML = '<option value="">Sélectionner une équipe...</option>';
+        demoTeams.forEach(team => {
+            teamSelect.innerHTML += `<option value="${team}">${team}</option>`;
+        });
+    }
+}
+
+async function connectToAPI() {
+    const ctfdUrl = document.getElementById('ctfd-url').value.trim();
+    const token = document.getElementById('api-token').value.trim();
+    
+    // Afficher le loader
+    showLoginLoader('Connexion en cours...');
+    
+    if (!ctfdUrl) {
+        console.warn('Veuillez saisir l\'URL CTFd');
+        hideLoginLoader();
+        return;
+    }
+
+    if (!token) {
+        console.warn('Veuillez saisir votre token API CTFd');
+        hideLoginLoader();
+        return;
+    }
+
+    updateAPIStatus('loading', 'Vérification du token...');
+    
+    try {
+        await authenticateWithCTFd(ctfdUrl, token);
+    } catch (error) {
+        updateAPIStatus('disconnected', 'Erreur de connexion');
+        hideLoginLoader();
+        
+        if (error.message === 'CORS_POLICY_ERROR') {
+            showCORSError();
+        } else {
+            showError('Erreur de connexion à l\'API CTFd: ' + error.message);
+        }
+    }
+}
+
+async function authenticateWithCTFd(ctfdUrl, token) {
+    // Appel API pour vérifier le token et récupérer les permissions
+    currentUser.ctfdUrl = ctfdUrl;
+    currentUser.token = token;
+    
+    try {
+        // 1. Vérifier le token et récupérer les infos utilisateur
+        showLoginLoader('Vérification du token...');
+        const userInfo = await callCTFdAPI('/api/v1/users/me', 'GET');
+        currentUser.name = userInfo.data.name;
+        currentUser.id = userInfo.data.id;
+        
+        // 2. Tester les permissions en tentant d'accéder aux endpoints admin
+        showLoginLoader('Vérification des permissions...');
+        try {
+            await callCTFdAPI('/api/v1/users', 'GET');
+            // Si cet appel réussit, l'utilisateur a des droits admin
+            userPermissions.isAdmin = true;
+            userPermissions.canViewAllTeams = true;
+            userPermissions.canViewFutureChalls = true;
+            updateAPIStatus('connected', `Admin: ${currentUser.name}`);
+        } catch (adminError) {
+            // L'utilisateur n'a pas les droits admin
+            userPermissions.isAdmin = false;
+            userPermissions.canViewAllTeams = false;
+            userPermissions.canViewFutureChalls = false;
+            updateAPIStatus('connected', `Équipe: ${currentUser.name}`);
+        }
+        
+        // 3. Vérifier l'état du CTF
+        try {
+            const configResponse = await callCTFdAPI('/api/v1/configs');
+            console.log('Configuration CTFd:', configResponse.data);
+            
+            // Vérifier si le CTF est en mode setup ou fini
+            const ctfName = configResponse.data?.ctf_name || 'CTF';
+            const startTime = configResponse.data?.start || null;
+            const endTime = configResponse.data?.end || null;
+            
+            if (startTime) {
+                const start = new Date(startTime * 1000);
+                const now = new Date();
+                if (now < start) {
+                    showError(`Le CTF "${ctfName}" n'a pas encore commencé. Début : ${start.toLocaleString()}`);
+                }
+            }
+            
+            if (endTime) {
+                const end = new Date(endTime * 1000);
+                const now = new Date();
+                if (now > end) {
+                    showError(`Le CTF "${ctfName}" est terminé depuis le ${end.toLocaleString()}`);
+                }
+            }
+        } catch (e) {
+            console.log('Impossible de récupérer la config CTFd:', e);
+        }
+        
+        // 4. Charger les données selon les permissions
+        showLoginLoader('Chargement des données...');
+        await loadDataBasedOnPermissions();
+        
+        hideLoginLoader();
+        showMainInterface();
+        
+    } catch (error) {
+        if (error.status === 401 || error.status === 403) {
+            throw new Error('Token invalide ou expiré');
+        } else if (error.status === 404) {
+            throw new Error('URL CTFd incorrecte');
+        } else if (error.status === 'CORS') {
+            throw new Error('CORS_POLICY_ERROR');
+        } else {
+            throw new Error('Erreur de connexion: ' + error.message);
+        }
+    }
+}
+
+async function callCTFdAPI(endpoint, method = 'GET', data = null) {
+    // Si on utilise le proxy local, modifier l'URL
+    let url;
+    console.log('🔍 DEBUG PROXY:', {
+        hostname: window.location.hostname,
+        port: window.location.port,
+        href: window.location.href,
+        isLocalhost: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1',
+        isPort3000: window.location.port === '3000'
+    });
+    
+    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
+        // Utilisation du proxy local - endpoint contient déjà /api/v1/...
+        console.log('✅ Using PROXY for endpoint:', endpoint);
+        url = endpoint;
+    } else {
+        // Appel direct
+        console.log('❌ Using DIRECT call to:', currentUser.ctfdUrl);
+        url = `${currentUser.ctfdUrl}${endpoint}`;
+    }
+    
+    const options = {
+        method: method,
+        headers: {
+            'Authorization': `Token ${currentUser.token}`,
+            'Content-Type': 'application/json',
+        },
+        mode: 'cors', // Explicitement demander CORS
+        credentials: 'omit' // Ne pas envoyer de cookies
+    };
+    
+    console.log('🌐 API CALL:', url, 'avec token:', currentUser.token ? 'Oui' : 'Non');
+    console.log('📋 Request details:', {
+        method: method,
+        headers: options.headers,
+        hasBody: !!options.body
+    });
+    
+    if (data && method !== 'GET') {
+        options.body = JSON.stringify(data);
+    }
+    
+    try {
+        const response = await fetch(url, options);
+        
+        if (!response.ok) {
+            console.error('Erreur HTTP:', response.status, 'pour', url);
+            
+            // Essayer de lire le corps de la réponse pour plus de détails
+            let errorDetails = '';
+            try {
+                const errorText = await response.text();
+                try {
+                    const errorData = JSON.parse(errorText);
+                    errorDetails = errorData.message || JSON.stringify(errorData);
+                } catch (e) {
+                    errorDetails = errorText;
+                }
+            } catch (e) {
+                errorDetails = 'Erreur inconnue';
+            }
+            
+            const error = new Error(`HTTP ${response.status}: ${errorDetails}`);
+            error.status = response.status;
+            throw error;
+        }
+        
+        const data = await response.json();
+        console.log('📦 API RESPONSE:', {
+            endpoint: endpoint,
+            status: response.status,
+            ok: response.ok,
+            dataType: typeof data,
+            hasData: !!data.data,
+            dataLength: Array.isArray(data.data) ? data.data.length : 'N/A'
+        });
+        console.log('📄 Full response data:', data);
+        return data;
+    } catch (error) {
+        // Gestion spécifique de l'erreur CORS
+        if (error.name === 'TypeError' && error.message.includes('CORS')) {
+            const corsError = new Error('CORS_ERROR');
+            corsError.status = 'CORS';
+            throw corsError;
+        }
+        throw error;
+    }
+}
+
+async function loadDataBasedOnPermissions() {
+    if (userPermissions.isAdmin) {
+        await loadAdminData();
+    } else {
+        await loadUserData();
+    }
+}
+
+async function preloadAllTeams() {
+    try {
+        console.log('🏁 Préchargement de toutes les équipes...');
+        showLoginLoader('Chargement des équipes...');
+        let allTeams = [];
+        let page = 1;
+        let hasMore = true;
+        
+        // Gérer la pagination de l'API CTFd
+        while (hasMore) {
+            showLoginLoader(`Chargement des équipes (page ${page})...`);
+            const teamsResponse = await callCTFdAPI(`/api/v1/teams?page=${page}`);
+            if (teamsResponse.data && teamsResponse.data.length > 0) {
+                allTeams = allTeams.concat(teamsResponse.data);
+                // CTFd retourne généralement 50 équipes par page
+                if (teamsResponse.data.length < 50) {
+                    hasMore = false;
+                }
+                page++;
+            } else {
+                hasMore = false;
+            }
+        }
+        
+        console.log(`📊 ${allTeams.length} équipes trouvées`);
+        
+        // Enrichir avec les infos de base (sans les solves) - en batch pour éviter trop d'appels
+        teams = allTeams.map((team, index) => ({
+            id: team.id,
+            name: team.name,
+            score: team.score || 0,
+            place: team.place || (index + 1),
+            color: `hsl(${(index * 360 / allTeams.length) % 360}, 70%, 50%)`,
+            // Les solves seront chargés à la demande
+            solvesLoaded: false
+        }));
+        
+        // Trier selon le mode actuel
+        if (teamSortMode === 'name') {
+            teams.sort((a, b) => a.name.localeCompare(b.name));
+        } else {
+            teams.sort((a, b) => b.score - a.score);
+        }
+        console.log(`✅ ${teams.length} équipes préchargées`);
+        
+    } catch (error) {
+        console.error('Erreur préchargement équipes:', error);
+        teams = [];
+    }
+}
+
+async function loadAdminData() {
+    try {
+        // Précharger toutes les équipes
+        await preloadAllTeams();
+        
+        // Start with no teams selected for lazy loading
+        selectedTeams = [];
+        
+        // Charger TOUS les challenges (y compris cachés) pour les admins avec view=admin
+        try {
+            const challengesResponse = await callCTFdAPI('/api/v1/challenges?view=admin');
+            challenges = challengesResponse.data || [];
+            console.log('Challenges chargés (admin avec view=admin):', challenges.length);
+            
+            // Compter les challenges par état
+            const challengesByState = {};
+            challenges.forEach(c => {
+                const state = c.state || 'visible';
+                challengesByState[state] = (challengesByState[state] || 0) + 1;
+            });
+            console.log('Challenges par état:', challengesByState);
+            
+            if (challenges.length === 0) {
+                console.warn('Aucun challenge trouvé, même avec view=admin.');
+                showError('Aucun challenge dans CTFd. Créez des challenges dans l\'interface d\'administration.');
+            }
+        } catch (challengeError) {
+            console.error('Erreur lors du chargement des challenges:', challengeError);
+            if (challengeError.message.includes('403') || challengeError.message.includes('404')) {
+                showError('L\'API challenges n\'est pas accessible. Le CTF n\'a peut-être pas encore démarré ou est terminé.');
+                // Utiliser les données de démo si pas d'accès aux challenges
+                challenges = [];
+            } else {
+                throw challengeError;
+            }
+        }
+        
+        // Créer challengeMap à partir des vraies données CTFd
+        await buildChallengeMapFromCTFd(challenges);
+        
+        // Ne plus charger les solves au démarrage - ils seront chargés à la demande
+        console.log('✅ Challenges et équipes chargés. Les solves seront chargés à la demande.');
+        
+        // Activer tous les contrôles pour les admins
+        document.getElementById('teams-section').classList.remove('admin-only');
+        document.getElementById('paths-btn').classList.remove('disabled');
+        document.getElementById('heatmap-btn').classList.remove('disabled');
+        
+    } catch (error) {
+        console.error('Erreur lors du chargement des données admin:', error);
+        showError('Erreur de chargement: ' + error.message + '. Vérifiez que l\'API CTFd est accessible.');
+        // Fallback vers des données de démo
+        generateMockAdminData();
+    }
+}
+
+async function loadUserData() {
+    try {
+        // Charger seulement les données accessibles à cet utilisateur
+        const userTeamResponse = await callCTFdAPI(`/api/v1/users/${currentUser.id}`);
+        const teamId = userTeamResponse.data.team_id;
+        
+        if (teamId) {
+            const teamResponse = await callCTFdAPI(`/api/v1/teams/${teamId}`);
+            teams = [{
+                id: teamId,
+                name: teamResponse.data.name,
+                color: '#3b82f6'
+            }];
+            selectedTeams = [teamResponse.data.name];
+            currentUser.teamName = teamResponse.data.name;
+        }
+        
+        // Charger seulement les challenges visibles/accessibles pour les utilisateurs
+        try {
+            const challengesResponse = await callCTFdAPI('/api/v1/challenges');
+            challenges = challengesResponse.data || [];
+            console.log('Challenges chargés (user standard):', challenges.length);
+            
+            if (challenges.length === 0) {
+                console.warn('Aucun challenge visible pour cet utilisateur.');
+                showError('Aucun challenge disponible. Le CTF n\'a peut-être pas encore commencé.');
+                
+                // Pour les utilisateurs, garder les données de démo si aucun challenge
+                console.log('Utilisation des données de démo pour l\'utilisateur');
+            }
+        } catch (challengeError) {
+            console.error('Erreur lors du chargement des challenges:', challengeError);
+            if (challengeError.message.includes('403') || challengeError.message.includes('404')) {
+                showError('L\'API challenges n\'est pas accessible. Le CTF n\'a peut-être pas encore démarré ou est terminé.');
+                // Utiliser les données de démo si pas d'accès aux challenges
+                challenges = [];
+            } else {
+                throw challengeError;
+            }
+        }
+        
+        // Créer challengeMap à partir des vraies données CTFd
+        await buildChallengeMapFromCTFd(challenges);
+        
+        // Charger les soumissions de cette équipe seulement
+        const teamSubmissionsResponse = await callCTFdAPI(`/api/v1/teams/${teamId}/solves`);
+        
+        // Générer les données de progression pour cette équipe
+        generateUserProgressFromSubmissions(teamSubmissionsResponse.data);
+        
+        // Désactiver les contrôles multi-équipes
+        document.getElementById('teams-section').classList.add('admin-only');
+        document.getElementById('paths-btn').classList.add('disabled');
+        document.getElementById('heatmap-btn').classList.add('disabled');
+        
+    } catch (error) {
+        console.error('Erreur lors du chargement des données utilisateur:', error);
+        showError('Erreur de chargement: ' + error.message + '. Vérifiez que l\'API CTFd est accessible.');
+        // Fallback vers des données de démo
+        generateMockUserData();
+    }
+}
+
+async function loadDemoData(type) {
+    showLoginLoader('Chargement du mode démo...');
+    
+    // Simuler un délai de chargement
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    if (type === 'admin') {
+        currentUser = { name: 'Demo Admin', token: 'demo_admin_token', ctfdUrl: 'demo', teamName: null, id: null };
+        userPermissions = { isAdmin: true, canViewAllTeams: true, canViewFutureChalls: true };
+        generateMockAdminData();
+    } else {
+        currentUser = { name: 'Demo User', token: 'demo_user_token', ctfdUrl: 'demo', teamName: 'Demo Team', id: null };
+        userPermissions = { isAdmin: false, canViewAllTeams: false, canViewFutureChalls: false };
+        generateMockUserData();
+    }
+    
+    updateAPIStatus('connected', `Mode démo: ${userPermissions.isAdmin ? 'Admin' : 'Équipe'}`);
+    hideLoginLoader();
+    showMainInterface();
+}
+
+function generateMockAdminData() {
+    teams = [
+        { name: 'CyberDetectives', color: '#ef4444' },
+        { name: 'InfoHunters', color: '#10b981' },
+        { name: 'DigitalSleuth', color: '#3b82f6' },
+        { name: 'TrackMasters', color: '#f59e0b' },
+        { name: 'DataHounds', color: '#8b5cf6' },
+        { name: 'NetTrackers', color: '#06b6d4' },
+        { name: 'SearchExperts', color: '#84cc16' },
+        { name: 'IntelGatherers', color: '#f97316' }
+    ];
+    
+    selectedTeams = []; // Start with no teams selected for lazy loading
+    generateMockProgressData();
+    
+    // Activer tous les contrôles pour les admins
+    document.getElementById('teams-section').classList.remove('admin-only');
+    document.getElementById('paths-btn').classList.remove('disabled');
+    document.getElementById('heatmap-btn').classList.remove('disabled');
+}
+
+function generateMockUserData() {
+    teams = [{ name: 'Demo Team', color: '#3b82f6' }];
+    selectedTeams = ['Demo Team'];
+    currentUser.teamName = 'Demo Team';
+    generateMockProgressDataForTeam('Demo Team');
+    
+    // Désactiver les contrôles multi-équipes
+    document.getElementById('teams-section').classList.add('admin-only');
+    document.getElementById('paths-btn').classList.add('disabled');
+    document.getElementById('heatmap-btn').classList.add('disabled');
+}
+
+function generateProgressFromTeamSolves(teamSolves) {
+    // Nouvelle fonction optimisée qui utilise les solves des équipes directement
+    teams.forEach(team => {
+        teamProgress[team.name] = {};
+        
+        // Récupérer les solves de cette équipe
+        const teamSolveData = teamSolves.find(ts => ts.teamId === team.id);
+        const solves = teamSolveData ? teamSolveData.solves : [];
+        
+        Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
+            // Vérifier si l'équipe a résolu ce challenge
+            const solve = solves.find(s => 
+                s.challenge_id === challengeInfo.ctfd_id || 
+                s.challenge_id === parseInt(challengeId)
+            );
+            
+            const solved = !!solve;
+            const attempted = solved; // Dans CTFd, on ne voit que les résolutions
+            const attempts = solved ? 1 : 0; // Approximation
+            
+            // Temps passé (approximation)
+            let timeSpent = solved ? Math.floor(Math.random() * 60) + 10 : 0;
+            
+            // Vérifier les dépendances
+            const dependenciesResolved = challengeInfo.dependencies.every(dep => 
+                teamProgress[team.name][dep]?.solved || false
+            );
+            
+            // Vérifier si le challenge est caché
+            const isHidden = challengeInfo.state === 'hidden';
+            
+            teamProgress[team.name][challengeId] = {
+                solved: solved,
+                attempted: attempted,
+                locked: (!dependenciesResolved && challengeInfo.dependencies.length > 0) || isHidden,
+                hidden: isHidden,
+                timeSpent: timeSpent,
+                attempts: attempts,
+                points: solved ? challengeInfo.points : 0
+            };
+        });
+    });
+}
+
+function generateProgressFromSubmissions(submissions) {
+    // Analyser les vraies soumissions CTFd pour générer les données de progression
+    teams.forEach(team => {
+        teamProgress[team.name] = {};
+        
+        // Filtrer les soumissions de cette équipe
+        const teamSubmissions = submissions.filter(sub => sub.team_id === team.id);
+        
+        Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
+            // Trouver les soumissions pour ce challenge
+            const challengeSubmissions = teamSubmissions.filter(sub => 
+                sub.challenge_id === challengeInfo.ctfd_id || sub.challenge_id === parseInt(challengeId)
+            );
+            
+            const solved = challengeSubmissions.some(sub => sub.type === 'correct');
+            const attempted = challengeSubmissions.length > 0;
+            const attempts = challengeSubmissions.length;
+            
+            // Calculer le temps total passé (approximation basée sur les timestamps)
+            let timeSpent = 0;
+            if (challengeSubmissions.length > 1) {
+                const firstAttempt = new Date(challengeSubmissions[0].date);
+                const lastAttempt = new Date(challengeSubmissions[challengeSubmissions.length - 1].date);
+                timeSpent = Math.round((lastAttempt - firstAttempt) / (1000 * 60)); // en minutes
+            }
+            
+            // Vérifier les dépendances
+            const dependenciesResolved = challengeInfo.dependencies.every(dep => 
+                teamProgress[team.name][dep]?.solved || false
+            );
+            
+            // Vérifier si le challenge est caché
+            const isHidden = challengeInfo.state === 'hidden';
+            
+            teamProgress[team.name][challengeId] = {
+                solved: solved,
+                attempted: attempted,
+                locked: (!dependenciesResolved && challengeInfo.dependencies.length > 0) || isHidden,
+                hidden: isHidden,
+                timeSpent: timeSpent,
+                attempts: attempts,
+                points: solved ? challengeInfo.points : 0
+            };
+        });
+    });
+}
+
+function generateUserProgressFromSubmissions(userSolves) {
+    // Analyser les résolutions de l'utilisateur actuel
+    const teamName = currentUser.teamName;
+    teamProgress[teamName] = {};
+    
+    Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
+        // Vérifier si l'utilisateur a résolu ce challenge  
+        const challengeIdNum = parseInt(challengeId);
+        const solve = userSolves.find(s => s.challenge_id === challengeIdNum);
+        const solved = !!solve;
+        
+        // Pour les équipes, ne montrer que les challenges accessibles
+        const dependenciesResolved = challengeInfo.dependencies.every(dep => 
+            teamProgress[teamName][dep]?.solved || false
+        );
+        
+        if (!dependenciesResolved && challengeInfo.dependencies.length > 0) {
+            // Ne pas ajouter les challenges verrouillés pour les équipes
+            return;
+        }
+        
+        // Simulation des tentatives (CTFd ne stocke que les résolutions)
+        const attempts = solved ? Math.floor(Math.random() * 3) + 1 : 0;
+        const timeSpent = solved ? Math.floor(Math.random() * 60) + 10 : 0;
+        
+        teamProgress[teamName][challengeId] = {
+            solved: solved,
+            attempted: solved, // Nous n'avons que les résolutions dans CTFd
+            locked: false,
+            timeSpent: timeSpent,
+            attempts: attempts,
+            points: solved ? challengeInfo.points : 0
+        };
+    });
+}
+
+function generateMockProgressData() {
+    // For lazy loading, only generate data for already selected teams
+    // This function is now mainly used for maintaining compatibility
+    selectedTeams.forEach((teamName, teamIndex) => {
+        const team = teams.find(t => t.name === teamName);
+        if (!team) return;
+        
+        teamProgress[team.name] = {};
+        const teamSkill = 0.9 - (teamIndex * 0.1);
+        
+        Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
+            const dependenciesResolved = challengeInfo.dependencies.every(dep => 
+                teamProgress[team.name][dep]?.solved || false
+            );
+
+            if (!dependenciesResolved && challengeInfo.dependencies.length > 0) {
+                teamProgress[team.name][challengeId] = {
+                    solved: false,
+                    attempted: false,
+                    locked: true,
+                    timeSpent: 0,
+                    attempts: 0
+                };
+                return;
+            }
+
+            const difficulty = challengeInfo.points / 100;
+            const solveProb = Math.max(0.1, teamSkill / difficulty * (0.6 + Math.random() * 0.8));
+            
+            const solved = Math.random() < solveProb;
+            const attempted = solved || Math.random() < 0.7;
+            
+            teamProgress[team.name][challengeId] = {
+                solved: solved,
+                attempted: attempted,
+                locked: false,
+                timeSpent: attempted ? Math.floor(Math.random() * 120) + 10 : 0,
+                attempts: attempted ? Math.floor(Math.random() * 5) + 1 : 0,
+                points: solved ? challengeInfo.points : 0
+            };
+        });
+    });
+}
+
+function generateMockProgressDataForTeam(teamName) {
+    teamProgress[teamName] = {};
+    const teamSkill = 0.7; // Compétence moyenne
+    
+    Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
+        const dependenciesResolved = challengeInfo.dependencies.every(dep => 
+            teamProgress[teamName][dep]?.solved || false
+        );
+
+        if (!dependenciesResolved && challengeInfo.dependencies.length > 0) {
+            // Ne pas révéler les challenges verrouillés aux équipes
+            return;
+        }
+
+        const difficulty = challengeInfo.points / 100;
+        const solveProb = Math.max(0.1, teamSkill / difficulty * (0.6 + Math.random() * 0.8));
+        
+        const solved = Math.random() < solveProb;
+        const attempted = solved || Math.random() < 0.7;
+        
+        teamProgress[teamName][challengeId] = {
+            solved: solved,
+            attempted: attempted,
+            locked: false,
+            timeSpent: attempted ? Math.floor(Math.random() * 120) + 10 : 0,
+            attempts: attempted ? Math.floor(Math.random() * 5) + 1 : 0,
+            points: solved ? challengeInfo.points : 0
+        };
+    });
+}
+
+async function showMainInterface() {
+    document.getElementById('login-modal').style.display = 'none';
+    document.getElementById('container').style.display = 'flex';
+    document.getElementById('user-display').textContent = `${currentUser.name} (${userPermissions.isAdmin ? 'Admin' : 'Équipe'})`;
+    
+    await initializeInterface();
+}
+
+async function initializeInterface() {
+    // Initialize D3.js system now that container is visible
+    console.log('🔍 Checking D3 availability:', {
+        d3SystemReady,
+        hasInitializeD3: typeof window.initializeD3Visualization !== 'undefined',
+        d3LibraryLoaded: typeof d3 !== 'undefined'
+    });
+    
+    if (!d3SystemReady && window.initializeD3Visualization) {
+        try {
+            console.log('🎨 Initializing D3.js system after login...');
+            const d3Initialized = await window.initializeD3Visualization();
+            if (d3Initialized) {
+                d3SystemReady = true;
+                console.log('✅ D3.js visualization system ready');
+            }
+        } catch (error) {
+            console.error('❌ D3.js post-login initialization failed:', error);
+        }
+    }
+    
+    generateTeamFilters();
+    generateChallengeMap();
+    
+    // Use D3 rendering if available and ready, fallback to legacy system
+    if (d3SystemReady && window.renderD3Challenges && typeof isD3Ready === 'function' && isD3Ready()) {
+        try {
+            console.log('🔄 Rendering challenges with D3.js...');
+            await renderD3Challenges();
+            console.log('✅ Using D3.js rendering system');
+        } catch (error) {
+            console.error('❌ D3 rendering failed in initializeInterface:', error);
+            console.log('🔄 Falling back to legacy rendering system');
+            renderChallenges();
+            drawDependencies();
+            updateTransform(); // Ensure SVG follows challenge container
+        }
+    } else {
+        console.log('⚠️ Using legacy rendering system');
+        renderChallenges();
+        drawDependencies();
+        updateTransform(); // Ensure SVG follows challenge container
+    }
+    
+    updateGlobalStats();
+    updateLiveStats();
+}
+
+function generateTeamFilters(searchTerm = '') {
+    if (!userPermissions.canViewAllTeams) return;
+    
+    const container = document.getElementById('team-filters');
+    
+    // Ajouter barre de recherche si pas déjà présente
+    let searchBar = document.getElementById('team-search-container');
+    if (!searchBar) {
+        searchBar = document.createElement('div');
+        searchBar.id = 'team-search-container';
+        searchBar.innerHTML = `
+            <input type="text" 
+                   id="team-search" 
+                   placeholder="🔍 Rechercher une équipe..." 
+                   style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;"
+                   oninput="searchTeams(this.value)">
+        `;
+        container.parentElement.insertBefore(searchBar, container);
+    }
+    
+    // Filtrer les équipes selon la recherche
+    let filteredTeams = teams.filter(team => 
+        team.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    
+    // Appliquer le filtre "showOnlySelected" si actif
+    if (showOnlySelected) {
+        filteredTeams = filteredTeams.filter(team => selectedTeams.includes(team.name));
+    }
+    
+    // Toujours mettre les équipes sélectionnées en haut (sauf si on affiche uniquement les sélectionnées)
+    if (!showOnlySelected) {
+        const selectedFirst = [];
+        const unselected = [];
+        
+        filteredTeams.forEach(team => {
+            if (selectedTeams.includes(team.name)) {
+                selectedFirst.push(team);
+            } else {
+                unselected.push(team);
+            }
+        });
+        
+        // Combiner avec les sélectionnées en premier
+        filteredTeams = [...selectedFirst, ...unselected];
+    }
+    
+    container.innerHTML = filteredTeams.map(team => {
+        const isChecked = selectedTeams.includes(team.name);
+        const totalChallenges = Object.keys(challengeMap).length;
+        
+        // Show loading indicator if team data is being loaded, cached data if available, or placeholder
+        let progressText = '0/0';
+        if (loadingTeams.has(team.name)) {
+            progressText = '⏳ Loading...';
+        } else if (isCacheValid(team.name) || teamProgress[team.name]) {
+            const solvedCount = getTeamSolvedCount(team.name);
+            progressText = `${solvedCount}/${totalChallenges}`;
+        } else {
+            progressText = `📊 Not loaded`;
+        }
+        
+        return `
+            <label class="team-checkbox">
+                <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleTeam('${team.name}', this)">
+                <div class="team-color" style="background: ${team.color};"></div>
+                <span class="team-name">${team.name}</span>
+                <span class="team-progress">${progressText}</span>
+            </label>
+        `;
+    }).join('');
+    
+    // Afficher le nombre de résultats
+    if (searchTerm) {
+        container.innerHTML = `<div style="font-size: 11px; color: #6b7280; margin-bottom: 8px;">
+            ${filteredTeams.length} équipe(s) trouvée(s)</div>` + container.innerHTML;
+    }
+}
+
+// Fonction de recherche d'équipes
+function searchTeams(searchTerm) {
+    generateTeamFilters(searchTerm);
+}
+
+// Fonction de tri des équipes
+function sortTeamsBy(mode) {
+    if (mode === 'selected') {
+        // Toggle pour afficher seulement les équipes sélectionnées
+        showOnlySelected = !showOnlySelected;
+        document.getElementById('sort-selected-btn').style.background = showOnlySelected ? '#ef4444' : '#10b981';
+        document.getElementById('sort-selected-btn').textContent = showOnlySelected ? '✓ Coché seul' : '✓ Coché';
+    } else {
+        teamSortMode = mode;
+        showOnlySelected = false; // Reset le filtre quand on change de tri
+        
+        // Mettre à jour l'apparence des boutons
+        document.getElementById('sort-score-btn').style.background = mode === 'score' ? '#6366f1' : '#10b981';
+        document.getElementById('sort-name-btn').style.background = mode === 'name' ? '#6366f1' : '#10b981';
+        document.getElementById('sort-selected-btn').style.background = '#10b981';
+        document.getElementById('sort-selected-btn').textContent = '✓ Coché';
+        
+        // Trier les équipes selon le mode choisi
+        if (mode === 'name') {
+            teams.sort((a, b) => a.name.localeCompare(b.name));
+        } else {
+            // Tri par score par défaut
+            teams.sort((a, b) => b.score - a.score);
+        }
+    }
+    
+    // Régénérer l'affichage
+    const searchValue = document.getElementById('team-search')?.value || '';
+    generateTeamFilters(searchValue);
+}
+
+// ==================== TEAM MANAGEMENT FUNCTIONS ====================
+// Enhanced team selection with lazy loading
+
+async function toggleTeam(teamName, checkbox) {
+    if (checkbox.checked) {
+        // Add team to selection and load its data
+        if (!selectedTeams.includes(teamName)) {
+            selectedTeams.push(teamName);
+        }
+        
+        try {
+            await loadTeamDataLazy(teamName);
+            
+            // Charger les submissions (fails) de l'équipe
+            const team = teams.find(t => t.name === teamName);
+            if (team && team.id) {
+                await loadTeamSubmissions(team.id);
+            }
+            
+            updateVisualization();
+            console.log(`Team ${teamName} added to view`);
+        } catch (error) {
+            // Remove from selection if loading failed
+            selectedTeams = selectedTeams.filter(t => t !== teamName);
+            checkbox.checked = false;
+            console.error(`Failed to load team ${teamName}`);
+        }
+    } else {
+        // Remove team from selection
+        selectedTeams = selectedTeams.filter(t => t !== teamName);
+        updateVisualization();
+        console.log(`Team ${teamName} removed from view`);
+    }
+}
+
+function selectAllTeams() {
+    if (!userPermissions.canViewAllTeams) return;
+    
+    const checkboxes = document.querySelectorAll('#team-filters input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = true;
+        const teamName = checkbox.parentElement.querySelector('.team-name').textContent;
+        if (!selectedTeams.includes(teamName)) {
+            selectedTeams.push(teamName);
+        }
+    });
+    
+    // Load all team data
+    const loadingPromises = teams.map(team => loadTeamDataLazy(team.name));
+    Promise.all(loadingPromises).then(() => {
+        updateVisualization();
+        console.log(`All ${teams.length} teams loaded`);
+    }).catch(() => {
+        console.warn('Some teams failed to load');
+    });
+}
+
+function deselectAllTeams() {
+    const checkboxes = document.querySelectorAll('#team-filters input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    
+    selectedTeams = [];
+    updateVisualization();
+    console.log('All teams deselected');
+}
+
+function selectSingleTeam() {
+    // Prompt user to select which team
+    const teamNames = teams.map(t => t.name);
+    if (teamNames.length === 0) {
+        console.warn('No teams available');
+        return;
+    }
+    
+    // For now, select the first team. In a real implementation, 
+    // you might want to show a dropdown or modal
+    const selectedTeam = teamNames[0];
+    
+    // Deselect all first
+    deselectAllTeams();
+    
+    // Select just one team
+    setTimeout(() => {
+        const checkbox = Array.from(document.querySelectorAll('#team-filters input[type="checkbox"]'))
+            .find(cb => cb.parentElement.querySelector('.team-name').textContent === selectedTeam);
+        
+        if (checkbox) {
+            checkbox.checked = true;
+            toggleTeam(selectedTeam, checkbox);
+        }
+    }, 100);
+}
+
+function generateChallengeMap() {
+    console.log('=== GÉNÉRATION DE LA CARTE ===');
+    console.log('ChallengeMap entries:', Object.keys(challengeMap).length);
+    
+    // Skip DOM manipulation if using D3 system
+    if (d3SystemReady) {
+        console.log('📊 Using D3 system, skipping legacy DOM generation');
+        return;
+    }
+    
+    // Legacy system: create container if needed
+    let container = document.getElementById('challenges-container');
+    if (!container) {
+        const mapContainer = document.getElementById('map-container');
+        if (!mapContainer) {
+            console.error('❌ map-container not found');
+            return;
+        }
+        
+        // Create transform wrapper
+        let transformWrapper = document.getElementById('transform-wrapper');
+        if (!transformWrapper) {
+            transformWrapper = document.createElement('div');
+            transformWrapper.id = 'transform-wrapper';
+            mapContainer.appendChild(transformWrapper);
+        }
+        
+        // Create challenges container
+        container = document.createElement('div');
+        container.id = 'challenges-container';
+        transformWrapper.appendChild(container);
+    }
+    container.innerHTML = '';
+    
+    // DEBUG: Afficher la structure actuelle
+    Object.entries(challengeMap).forEach(([id, info]) => {
+        console.log(`${id}: ${info.name} at (${info.position.x}, ${info.position.y}) - deps: [${info.dependencies.join(', ')}]`);
+    });
+
+    Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
+        // Pour les utilisateurs non-admin, ne montrer que les challenges accessibles
+        if (!userPermissions.canViewFutureChalls) {
+            const userProgress = getTeamProgress(currentUser.teamName, challengeId);
+            if (!userProgress) return; // Challenge non accessible = pas affiché
+        }
+
+        const node = document.createElement('div');
+        node.className = 'challenge-node';
+        node.style.left = challengeInfo.position.x + 'px';
+        node.style.top = challengeInfo.position.y + 'px';
+        node.style.position = 'absolute'; // S'assurer que la position est absolue
+        node.setAttribute('data-challenge', challengeId);
+        
+        // DEBUG: Afficher les positions lors de la création
+        console.log(`Creating node ${challengeInfo.name}: left=${challengeInfo.position.x}px, top=${challengeInfo.position.y}px`);
+        
+        const state = getChallengeOverallState(challengeId);
+        node.classList.add(`challenge-${state}`);
+        
+        let statusIcon = '';
+        if (state === 'solved') statusIcon = '✓';
+        else if (state === 'attempted') statusIcon = '!';
+        else if (state === 'available') statusIcon = '○';
+        else statusIcon = '🔒';
+        
+        // Indicateurs par équipe (seulement pour admin)
+        let teamIndicators = '';
+        if (userPermissions.canViewAllTeams) {
+            teamIndicators = `
+                <div class="challenge-team-indicator">
+                    ${selectedTeams.slice(0, 5).map(teamName => { // Limiter à 5 équipes max pour la lisibilité
+                        const team = teams.find(t => t.name === teamName);
+                        const progress = getTeamProgress(teamName, challengeId);
+                        
+                        let dotColor = '#e5e7eb';
+                        if (progress?.solved) dotColor = team.color;
+                        else if (progress?.attempted) dotColor = '#f59e0b';
+                        else if (progress?.locked) dotColor = '#9ca3af';
+                        
+                        return `<div class="team-mini-dot" style="background: ${dotColor};" title="${teamName}"></div>`;
+                    }).join('')}
+                </div>
+            `;
+        }
+        
+        node.innerHTML = `
+            <div class="challenge-name">${challengeInfo.name}</div>
+            <div class="challenge-category">${challengeInfo.category || 'General'}</div>
+            <div class="challenge-points">${challengeInfo.points} pts</div>
+            <div class="challenge-status">${statusIcon}</div>
+            ${teamIndicators}
+        `;
+        
+        // Apply custom position if available
+        if (customPositions[challengeId]) {
+            node.style.left = customPositions[challengeId].x + 'px';
+            node.style.top = customPositions[challengeId].y + 'px';
+            challengeInfo.position = customPositions[challengeId];
+        }
+        
+        node.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showChallengeSolvesModal(challengeId);
+        });
+        node.addEventListener('mouseenter', (e) => showTooltip(e, challengeId));
+        node.addEventListener('mouseleave', hideTooltip);
+        
+        // Make node draggable
+        makeChallengeNodeDraggable(node, challengeId);
+        
+        container.appendChild(node);
+    });
+    
+    console.log('=== NODES CRÉÉS ===');
+    console.log('Nombre de nodes dans le container:', container.children.length);
+}
+
+function drawDependencies() {
+    const svg = document.getElementById('dependencies-svg');
+    if (!svg) {
+        console.error('Dependencies SVG element not found');
+        return;
+    }
+    
+    // Clear existing arrows but preserve the marker definition
+    const existingMarker = svg.querySelector('defs');
+    svg.innerHTML = '';
+    if (existingMarker) {
+        svg.appendChild(existingMarker);
+    }
+    
+    console.log('🎯 Drawing dependency arrows...');
+    
+    // 🔧 STEP 1: Calculate required SVG viewport based on challenge positions
+    const viewport = calculateSVGViewport();
+    console.log('📐 SVG Viewport calculated:', viewport);
+    
+    // 🔧 STEP 2: Set proper SVG dimensions and viewBox
+    svg.setAttribute('width', viewport.width);
+    svg.setAttribute('height', viewport.height);
+    svg.setAttribute('viewBox', `0 0 ${viewport.width} ${viewport.height}`);
+    
+    // 🔧 STEP 3: Add debugging info
+    console.log(`🎯 SVG configured: ${viewport.width}×${viewport.height} viewport`);
+    console.log(`📊 Challenge coordinate range: (${viewport.minX}-${viewport.maxX}, ${viewport.minY}-${viewport.maxY})`);
+    
+    let arrowCount = 0;
+    const arrowCoords = []; // For debugging
+    
+    // Process each challenge for dependencies
+    Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
+        if (!challengeInfo.dependencies || challengeInfo.dependencies.length === 0) {
+            return; // Skip challenges with no dependencies
+        }
+        
+        challengeInfo.dependencies.forEach(depId => {
+            // Find dependency challenge (handle both string and number IDs)
+            const depChallenge = challengeMap[String(depId)] || challengeMap[Number(depId)];
+            if (!depChallenge) {
+                console.warn(`Dependency ${depId} not found for challenge ${challengeInfo.name}`);
+                return;
+            }
+            
+            // Permission check - only show arrows user can see
+            if (!userPermissions.canViewAllTeams) {
+                const currentUserTeam = currentUser.teamName;
+                const hasAccessToCurrent = getTeamProgress(currentUserTeam, challengeId);
+                const hasAccessToDep = getTeamProgress(currentUserTeam, String(depId)) || 
+                                     getTeamProgress(currentUserTeam, Number(depId));
+                
+                if (!hasAccessToCurrent || !hasAccessToDep) {
+                    return; // Skip if user can't see both challenges
+                }
+            }
+            
+            // Validate positions
+            const depPos = depChallenge.position;
+            const curPos = challengeInfo.position;
+            
+            if (!depPos || !curPos || 
+                typeof depPos.x !== 'number' || typeof depPos.y !== 'number' ||
+                typeof curPos.x !== 'number' || typeof curPos.y !== 'number') {
+                return; // Skip if invalid positions
+            }
+            
+            // Calculate clean arrow coordinates (center to center)
+            const startX = depPos.x + 70; // Center of source challenge
+            const startY = depPos.y + 40; // Center of source challenge
+            const endX = curPos.x + 70;   // Center of target challenge  
+            const endY = curPos.y + 40;   // Center of target challenge
+            
+            // 🔧 STEP 4: Debug arrow coordinates
+            arrowCoords.push({
+                from: depChallenge.name,
+                to: challengeInfo.name,
+                coords: { startX, startY, endX, endY },
+                inViewport: startX >= 0 && startX <= viewport.width && 
+                           startY >= 0 && startY <= viewport.height &&
+                           endX >= 0 && endX <= viewport.width && 
+                           endY >= 0 && endY <= viewport.height
+            });
+            
+            // Create simple, clean arrow line
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', startX);
+            line.setAttribute('y1', startY);
+            line.setAttribute('x2', endX);
+            line.setAttribute('y2', endY);
+            line.classList.add('dependency-arrow');
+            line.setAttribute('marker-end', 'url(#arrowhead)');
+            
+            // Add metadata for tooltips/debugging
+            line.setAttribute('data-from', depChallenge.name);
+            line.setAttribute('data-to', challengeInfo.name);
+            line.setAttribute('data-coords', `(${startX},${startY})→(${endX},${endY})`);
+            
+            svg.appendChild(line);
+            arrowCount++;
+        });
+    });
+    
+    // 🔧 STEP 5: Debug arrow visibility
+    const clippedArrows = arrowCoords.filter(arrow => !arrow.inViewport);
+    if (clippedArrows.length > 0) {
+        console.warn(`⚠️ ${clippedArrows.length} arrows may be clipped:`);
+        clippedArrows.forEach(arrow => {
+            console.warn(`  ${arrow.from} → ${arrow.to}: (${arrow.coords.startX},${arrow.coords.startY})→(${arrow.coords.endX},${arrow.coords.endY})`);
+        });
+    }
+    
+    console.log(`✅ Created ${arrowCount} dependency arrows in ${viewport.width}×${viewport.height} viewport`);
+    console.log(`📊 Arrow visibility: ${arrowCount - clippedArrows.length}/${arrowCount} visible, ${clippedArrows.length} potentially clipped`);
+    
+    // 🎯 FINAL DEBUG INFO\n    console.log(`\ud83d\udd0d SVG Debug Summary:`);\n    console.log(`  📐 SVG Dimensions: ${svg.getAttribute('width')}×${svg.getAttribute('height')}`);\n    console.log(`  📊 ViewBox: ${svg.getAttribute('viewBox')}`);\n    console.log(`  🗺️ Challenge Range: (${viewport.minX}-${viewport.maxX}, ${viewport.minY}-${viewport.maxY})`);\n    console.log(`  🎯 Total Challenges: ${Object.keys(challengeMap).length}`);\n    console.log(`  ➡️ Total Arrows: ${arrowCount}`);\n    \n    // Ensure SVG transform is synchronized with challenge container
+    updateTransform();
+}
+
+// 🔧 NEW FUNCTION: Calculate the required SVG viewport to contain all challenges
+function calculateSVGViewport() {
+    const challenges = Object.values(challengeMap);
+    
+    if (challenges.length === 0) {
+        return { width: 1400, height: 1000, minX: 0, maxX: 1400, minY: 0, maxY: 1000 };
+    }
+    
+    // Find coordinate bounds of all challenges
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    
+    challenges.forEach(challenge => {
+        if (challenge.position && 
+            typeof challenge.position.x === 'number' && 
+            typeof challenge.position.y === 'number') {
+            
+            // Challenge dimensions: 140×80
+            const left = challenge.position.x;
+            const right = challenge.position.x + 140;
+            const top = challenge.position.y;
+            const bottom = challenge.position.y + 80;
+            
+            minX = Math.min(minX, left);
+            maxX = Math.max(maxX, right);
+            minY = Math.min(minY, top);
+            maxY = Math.max(maxY, bottom);
+        }
+    });
+    
+    // Add padding for arrows and margins (arrows extend from challenge centers)
+    const padding = 100;
+    const finalMinX = Math.max(0, minX - padding);
+    const finalMinY = Math.max(0, minY - padding);
+    const finalMaxX = maxX + padding;
+    const finalMaxY = maxY + padding;
+    
+    // Ensure minimum size (match transform-wrapper minimums)
+    const width = Math.max(1400, finalMaxX - finalMinX);
+    const height = Math.max(1000, finalMaxY - finalMinY);
+    
+    return {
+        width: Math.ceil(width),
+        height: Math.ceil(height),
+        minX: finalMinX,
+        maxX: finalMaxX,
+        minY: finalMinY,
+        maxY: finalMaxY
+    };
+}
+
+function getTeamProgress(teamName, challengeId) {
+    return teamProgress[teamName]?.[challengeId];
+}
+
+function getChallengeOverallState(challengeId) {
+    if (!userPermissions.canViewAllTeams) {
+        // Mode utilisateur : état basé sur cette équipe seulement
+        const progress = getTeamProgress(currentUser.teamName, challengeId);
+        if (!progress) return 'hidden';
+        if (progress.solved) return 'solved';
+        if (progress.attempted) return 'attempted';
+        if (progress.locked) return 'locked';
+        return 'available';
+    }
+
+    // Mode admin : état basé sur toutes les équipes sélectionnées
+    const hasAnyResolved = selectedTeams.some(team => 
+        getTeamProgress(team, challengeId)?.solved
+    );
+    if (hasAnyResolved) return 'solved';
+    
+    const hasAnyAttempted = selectedTeams.some(team => 
+        getTeamProgress(team, challengeId)?.attempted
+    );
+    if (hasAnyAttempted) return 'attempted';
+    
+    const hasAnyAvailable = selectedTeams.some(team => {
+        const progress = getTeamProgress(team, challengeId);
+        return progress && !progress.locked;
+    });
+    return hasAnyAvailable ? 'available' : 'locked';
+}
+
+function getTeamSolvedCount(teamName) {
+    if (!teamProgress[teamName]) return 0;
+    return Object.values(teamProgress[teamName]).filter(p => p.status === 'solved').length;
+}
+
+function showTooltip(event, challengeId) {
+    const tooltip = document.getElementById('tooltip');
+    const challengeInfo = challengeMap[challengeId];
+    
+    if (!userPermissions.canViewAllTeams) {
+        const progress = getTeamProgress(currentUser.teamName, challengeId);
+        
+        let content = `<strong>${challengeInfo.name}</strong><br>Points: ${challengeInfo.points}<br><br>`;
+        
+        if (progress?.solved) {
+            const failures = Math.max(0, (progress.attempts || 1) - 1);
+            content += `✅ <strong>Résolu !</strong><br>Temps: ${progress.timeSpent}min<br>Tentatives: ${progress.attempts || 1}`;
+            if (failures > 0) content += `<br>Échecs: ${failures}`;
+        } else if (progress?.attempted) {
+            content += `⚠️ <strong>Tenté</strong><br>Temps: ${progress.timeSpent}min<br>Tentatives: ${progress.attempts || 1}<br>Échecs: ${progress.attempts || 1}`;
+        } else {
+            content += `📝 <strong>Disponible</strong><br>Prêt à être tenté`;
+        }
+        
+        tooltip.innerHTML = content;
+    } else {
+        // Mode admin : affichage complet
+        const solvedTeams = selectedTeams.filter(team => 
+            getTeamProgress(team, challengeId)?.solved
+        );
+        const attemptedTeams = selectedTeams.filter(team => 
+            getTeamProgress(team, challengeId)?.attempted && !getTeamProgress(team, challengeId)?.solved
+        );
+        
+        let content = `<strong>${challengeInfo.name}</strong><br>Points: ${challengeInfo.points}<br><br>`;
+        
+        if (solvedTeams.length > 0) {
+            content += `✅ <strong>Résolu par:</strong><br>`;
+            solvedTeams.forEach(team => {
+                const progress = getTeamProgress(team, challengeId);
+                content += `• ${team} (${progress.timeSpent}min, ${progress.attempts || 1} tent.)<br>`;
+            });
+        }
+        
+        if (attemptedTeams.length > 0) {
+            content += `<br>⚠️ <strong>Tenté par:</strong><br>`;
+            attemptedTeams.forEach(team => {
+                const progress = getTeamProgress(team, challengeId);
+                content += `• ${team} (${progress.timeSpent}min, ${progress.attempts || 1} tent.)<br>`;
+            });
+        }
+        
+        tooltip.innerHTML = content;
+    }
+    
+    tooltip.style.display = 'block';
+    tooltip.style.left = Math.min(event.pageX + 10, window.innerWidth - 320) + 'px';
+    tooltip.style.top = Math.min(event.pageY + 10, window.innerHeight - 200) + 'px';
+}
+
+function hideTooltip() {
+    const tooltip = document.getElementById('tooltip');
+    tooltip.style.display = 'none';
+}
+
+// ===== FONCTIONS DE STATISTIQUES =====
+
+
+function updateVisualization() {
+    generateChallengeMap();
+    
+    // Use D3 rendering if available and ready, fallback to legacy system
+    if (d3SystemReady && window.renderD3Challenges && typeof isD3Ready === 'function' && isD3Ready()) {
+        try {
+            renderD3Challenges();
+        } catch (error) {
+            console.error('❌ D3 rendering failed:', error);
+            console.log('🔄 Falling back to legacy rendering');
+            drawDependencies();
+            updateTransform(); // Ensure SVG follows challenge container
+        }
+    } else {
+        drawDependencies();
+        updateTransform(); // Ensure SVG follows challenge container
+    }
+    
+    generateTeamFilters();
+    updateGlobalStats();
+    updateLiveStats();
+}
+
+function updateGlobalStats() {
+    const totalChallenges = Object.keys(challengeMap).length;
+    
+    if (!userPermissions.canViewAllTeams) {
+        const solvedCount = getTeamSolvedCount(currentUser.teamName);
+        const attemptedCount = Object.values(teamProgress[currentUser.teamName] || {}).filter(p => p.attempted).length;
+        
+        document.getElementById('global-stats').innerHTML = `
+            <div class="stat-item"><span>Votre progression:</span><span>${solvedCount}/${totalChallenges}</span></div>
+            <div class="stat-item"><span>Challenges tentés:</span><span>${attemptedCount}</span></div>
+            <div class="stat-item"><span>Points obtenus:</span><span>${calculateTeamScore(currentUser.teamName)}</span></div>
+        `;
+    } else {
+        const totalSolved = selectedTeams.reduce((sum, team) => sum + getTeamSolvedCount(team), 0);
+        const avgProgress = selectedTeams.length > 0 ? 
+            ((totalSolved / (selectedTeams.length * totalChallenges)) * 100).toFixed(1) : 0;
+        
+        document.getElementById('global-stats').innerHTML = `
+            <div class="stat-item"><span>Challenges totaux:</span><span>${totalChallenges}</span></div>
+            <div class="stat-item"><span>Équipes actives:</span><span>${selectedTeams.length}</span></div>
+            <div class="stat-item"><span>Progression moyenne:</span><span>${avgProgress}%</span></div>
+        `;
+    }
+}
+
+function updateLiveStats() {
+    if (!userPermissions.canViewAllTeams) {
+        const progress = teamProgress[currentUser.teamName] || {};
+        const latestChallenge = Object.entries(progress)
+            .filter(([id, p]) => p.solved)
+            .sort(([,a], [,b]) => (b.timeSpent || 0) - (a.timeSpent || 0))[0];
+        
+        document.getElementById('live-stats').innerHTML = `
+            <div class="stat-item"><span>Votre équipe:</span><span>${currentUser.teamName}</span></div>
+            <div class="stat-item"><span>Dernier résolu:</span><span>${latestChallenge ? challengeMap[latestChallenge[0]]?.name.substring(0, 15) + '...' : 'Aucun'}</span></div>
+            <div class="stat-item"><span>Mode de vue:</span><span>${currentViewMode}</span></div>
+        `;
+    } else {
+        if (selectedTeams.length === 0) {
+            document.getElementById('live-stats').innerHTML = `
+                <div class="stat-item"><span>Aucune équipe sélectionnée</span><span>-</span></div>
+            `;
+            return;
+        }
+        
+        const leadingTeam = selectedTeams.reduce((leader, team) => {
+            const teamScore = getTeamSolvedCount(team);
+            const leaderScore = getTeamSolvedCount(leader);
+            return teamScore > leaderScore ? team : leader;
+        }, selectedTeams[0]);
+        
+        document.getElementById('live-stats').innerHTML = `
+            <div class="stat-item"><span>Équipe en tête:</span><span>${leadingTeam}</span></div>
+            <div class="stat-item"><span>Mode connecté:</span><span>Admin</span></div>
+            <div class="stat-item"><span>Mode de vue:</span><span>${currentViewMode}</span></div>
+        `;
+    }
+}
+
+function calculateTeamScore(teamName) {
+    if (!teamProgress[teamName]) return 0;
+    return Object.entries(teamProgress[teamName])
+        .filter(([id, progress]) => progress.solved)
+        .reduce((sum, [id, progress]) => sum + (challengeMap[id]?.points || 0), 0);
+}
+
+function updateAPIStatus(status, message) {
+    const indicator = document.getElementById('api-indicator');
+    const text = document.getElementById('api-status-text');
+    
+    indicator.className = `status-indicator status-${status}`;
+    text.textContent = message;
+    
+    if (status === 'connected') {
+        hideError();
+        isConnected = true;
+    } else {
+        isConnected = false;
+    }
+}
+
+function showCORSError() {
+    const errorElement = document.getElementById('api-error');
+    if (!errorElement) return;
+    
+    errorElement.innerHTML = 
+`<strong>🚫 Erreur CORS détectée</strong><br><br>
+Le serveur CTFd ne permet pas les requêtes cross-origin depuis cette page.<br><br>
+<strong>Solutions possibles :</strong><br>
+1. <strong>Proxy CORS :</strong> Utilisez un proxy comme <code>https://cors-anywhere.herokuapp.com/</code><br>
+2. <strong>Extension navigateur :</strong> Installez "CORS Unblock" ou "CORS Toggle"<br>
+3. <strong>Serveur local :</strong> Hébergez cette page sur le même domaine que CTFd<br>
+4. <strong>Configuration CTFd :</strong> Ajoutez les headers CORS dans CTFd<br><br>
+<button class="demo-btn" onclick="useCORSProxy()">🔧 Essayer avec proxy CORS</button>
+<button class="demo-btn" onclick="showCORSInstructions()">📖 Instructions détaillées</button>`;
+    
+    errorElement.style.display = 'block';
+}
+
+function useCORSProxy() {
+    const currentUrl = document.getElementById('ctfd-url').value.trim();
+    if (currentUrl && !currentUrl.startsWith('https://cors-anywhere.herokuapp.com/')) {
+        document.getElementById('ctfd-url').value = 'https://cors-anywhere.herokuapp.com/' + currentUrl;
+        console.log('URL modifiée pour utiliser le proxy CORS. Cliquez sur "Se connecter" pour réessayer.');
+    } else {
+        console.warn('Ajoutez d\'abord une URL CTFd valide.');
+    }
+}
+
+function showQuickSetup() {
+    const instructions = 
+`⚡ INSTALLATION RAPIDE - 3 OPTIONS
+
+🥇 OPTION 1 : Extension Chrome/Firefox (30 secondes)
+1. Installez "Allow CORS" ou "CORS Unblock"
+2. Ouvrez ce fichier HTML directement
+3. Activez l'extension et connectez-vous
+✅ Avantage : Ultra rapide, aucune installation
+
+🥈 OPTION 2 : Proxy Node.js (2 minutes) 
+1. Dans le dossier du projet :
+   npm install
+   CTFD_URL=https://votre-ctfd.com npm start
+   
+2. Ouvrez http://localhost:3000/index.html
+✅ Avantage : Pas besoin d'extension, plus sécurisé
+
+🥉 OPTION 3 : Serveur Python + Extension
+1. python -m http.server 8000
+2. Installez une extension CORS
+3. Ouvrez http://localhost:8000/index.html
+✅ Avantage : Simple si Python déjà installé
+
+🔐 OBTENIR UN TOKEN API :
+1. Connectez-vous à CTFd
+2. Settings → Access Tokens → Create
+3. Copiez le token (ctf_xxxxxxxxx)
+
+🚀 Conseil : Commencez par l'Option 1 !`;
+    
+    console.log(instructions);
+}
+
+
+function hideError() {
+    document.getElementById('api-error').style.display = 'none';
+}
+
+function refreshData() {
+    if (!isConnected) return;
+    
+    updateAPIStatus('loading', 'Actualisation...');
+    
+    // Actualiser les données via l'API CTFd
+    setTimeout(async () => {
+        try {
+            await loadDataBasedOnPermissions();
+            updateVisualization();
+            updateAPIStatus('connected', `${userPermissions.isAdmin ? 'Admin' : 'Équipe'} connecté`);
+        } catch (error) {
+            console.error('Erreur actualisation:', error);
+            updateAPIStatus('disconnected', 'Erreur d\'actualisation');
+            showError('Erreur lors de l\'actualisation: ' + error.message);
+        }
+    }, 1000);
+}
+
+function logout() {
+    currentUser = { name: null, token: null, ctfdUrl: null, teamName: null, id: null };
+    teams = [];
+    teamProgress = {};
+    selectedTeams = [];
+    isConnected = false;
+    userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
+    
+    document.getElementById('container').style.display = 'none';
+    document.getElementById('login-modal').style.display = 'flex';
+    updateAPIStatus('disconnected', 'Déconnecté');
+    
+    // Reset form
+    document.getElementById('ctfd-url').value = 'https://demo.ctfd.io';
+    document.getElementById('api-token').value = '';
+}
+
+// Fonction pour calculer le niveau hiérarchique d'un challenge avec logique top-down correcte
+// Level 0 = ROOT/TOP challenges (NO dependencies)
+// Level 1 = Challenges that depend on Level 0 challenges
+// Level 2 = Challenges that depend on Level 1 challenges, etc.
+function calculateChallengeLevel(challengeId, challengeMap, levels = {}, visited = new Set(), depth = 0) {
+    // Add depth tracking to detect deep recursion
+    const indent = '  '.repeat(depth);
+    
+    // Convertir en string pour assurer la cohérence
+    const chalId = String(challengeId);
+    
+    console.log(`${indent}🔍 CALCULATING LEVEL for ${chalId} (depth: ${depth})`);
+    
+    // Si déjà calculé, retourner le niveau
+    if (levels[chalId] !== undefined) {
+        console.log(`${indent}📋 ${chalId} already calculated → Level ${levels[chalId]}`);
+        return levels[chalId];
+    }
+    
+    // Éviter les cycles infinis
+    if (visited.has(chalId)) {
+        console.warn(`${indent}🔄 CYCLE DETECTED for ${chalId} - treating as root`);
+        levels[chalId] = 0; // Traiter comme racine en cas de cycle
+        return 0;
+    }
+    
+    // Prevent extremely deep recursion
+    if (depth > 50) {
+        console.error(`${indent}⛔ MAX DEPTH REACHED for ${chalId} - treating as root`);
+        levels[chalId] = 0;
+        return 0;
+    }
+    
+    visited.add(chalId);
+    console.log(`${indent}📝 Added ${chalId} to visited set: [${Array.from(visited).join(', ')}]`);
+    
+    const challenge = challengeMap[chalId] || challengeMap[Number(chalId)];
+    if (!challenge) {
+        console.warn(`${indent}❌ Challenge ${chalId} not found in challengeMap`);
+        console.log(`${indent}📚 Available challenges: [${Object.keys(challengeMap).join(', ')}]`);
+        levels[chalId] = 0;
+        visited.delete(chalId);
+        return 0;
+    }
+    
+    console.log(`${indent}📊 Challenge: ${challenge.name}`);
+    console.log(`${indent}📊 Dependencies: [${(challenge.dependencies || []).join(', ')}]`);
+    console.log(`${indent}📊 Dependency count: ${(challenge.dependencies || []).length}`);
+    
+    // ✅ LEVEL 0: Challenges WITHOUT dependencies = ROOT/TOP of tree
+    if (!challenge.dependencies || challenge.dependencies.length === 0) {
+        levels[chalId] = 0;
+        console.log(`${indent}🌱 ROOT CHALLENGE: ${challenge.name} → Level 0 (no dependencies)`);
+        visited.delete(chalId);
+        console.log(`${indent}📝 Removed ${chalId} from visited set`);
+        return 0;
+    }
+    
+    // Pour les autres challenges: niveau = max des niveaux des dépendances + 1
+    let maxDependencyLevel = -1;
+    let validDependencies = 0;
+    
+    console.log(`${indent}🔗 Processing ${challenge.dependencies.length} dependencies for ${challenge.name}:`);
+    
+    for (let i = 0; i < challenge.dependencies.length; i++) {
+        const depId = challenge.dependencies[i];
+        const depKey = String(depId);
+        
+        console.log(`${indent}  [${i+1}/${challenge.dependencies.length}] Processing dependency: ${depId} → ${depKey}`);
+        
+        const dependencyChallenge = challengeMap[depKey] || challengeMap[Number(depKey)];
+        
+        if (dependencyChallenge) {
+            console.log(`${indent}  ✅ Found dependency challenge: ${dependencyChallenge.name}`);
+            console.log(`${indent}  🔄 Recursively calculating level for dependency ${depKey}...`);
+            
+            const depLevel = calculateChallengeLevel(depKey, challengeMap, levels, visited, depth + 1);
+            
+            console.log(`${indent}  📊 Dependency ${dependencyChallenge.name} has level: ${depLevel}`);
+            maxDependencyLevel = Math.max(maxDependencyLevel, depLevel);
+            validDependencies++;
+            
+            console.log(`${indent}  📈 Updated max dependency level: ${maxDependencyLevel} (valid deps: ${validDependencies})`);
+        } else {
+            console.warn(`${indent}  ⚠️ Dependency ${depId} not found for ${challenge.name}`);
+            console.log(`${indent}  🔍 Searched for: '${depKey}' and '${Number(depKey)}'`);
+            console.log(`${indent}  🗂️ Available challenge keys: [${Object.keys(challengeMap).slice(0, 10).join(', ')}${Object.keys(challengeMap).length > 10 ? '...' : ''}]`);
+        }
+    }
+    
+    console.log(`${indent}📊 Dependency analysis complete for ${challenge.name}:`);
+    console.log(`${indent}  - Valid dependencies: ${validDependencies}`);
+    console.log(`${indent}  - Max dependency level: ${maxDependencyLevel}`);
+    
+    // Si aucune dépendance valide, traiter comme racine
+    if (validDependencies === 0) {
+        levels[chalId] = 0;
+        console.log(`${indent}🌱 FALLBACK ROOT: ${challenge.name} → Level 0 (no valid dependencies)`);
+        visited.delete(chalId);
+        console.log(`${indent}📝 Removed ${chalId} from visited set`);
+        return 0;
+    }
+    
+    // ✅ HIERARCHY: Level = max dependency level + 1
+    const calculatedLevel = maxDependencyLevel + 1;
+    levels[chalId] = calculatedLevel;
+    
+    console.log(`${indent}🎯 HIERARCHICAL: ${challenge.name} → Level ${calculatedLevel} (max deps level: ${maxDependencyLevel} + 1)`);
+    
+    visited.delete(chalId); // Retirer de visited pour permettre d'autres calculs
+    console.log(`${indent}📝 Removed ${chalId} from visited set`);
+    
+    return calculatedLevel;
+}
+
+async function buildChallengeMapFromCTFd(ctfdChallenges) {
+    // Reconstruire challengeMap à partir des données CTFd
+    
+    if (!ctfdChallenges || ctfdChallenges.length === 0) {
+        console.warn('Aucun challenge reçu de CTFd, utilisation des données de démo');
+        return;
+    }
+    
+    console.log('=== CONSTRUCTION DE LA CARTE DES CHALLENGES ===');
+    console.log(`Nombre de challenges reçus: ${ctfdChallenges.length}`);
+    
+    // Si on a des challenges, on remplace le challengeMap par défaut
+    challengeMap = {};
+    
+    // Étape 1: Créer tous les challenges sans dépendances
+    ctfdChallenges.forEach(challenge => {
+        // Debug: afficher la structure complète
+        console.log(`Challenge: ${challenge.name} (ID: ${challenge.id})`);
+        console.log(`  - Category: ${challenge.category}`);
+        console.log(`  - Value: ${challenge.value}`);
+        
+        // Utiliser l'ID comme clé string pour éviter les problèmes
+        const challengeId = String(challenge.id);
+        
+        challengeMap[challengeId] = {
+            ctfd_id: challenge.id,
+            name: challenge.name,
+            position: { x: 0, y: 0 },
+            dependencies: [], // Sera rempli à l'étape 2
+            points: challenge.value,
+            category: challenge.category || 'default',
+            state: challenge.state || 'visible'
+        };
+    });
+    
+    // Étape 2: Fetch les requirements pour chaque challenge
+    console.log('=== 🔍 DETAILED DEPENDENCY FETCHING DEBUG ===');
+    console.log(`Attempting to fetch dependencies for ${ctfdChallenges.length} challenges...`);
+    console.log('Current CTFd URL:', currentUser.ctfdUrl);
+    console.log('Token available:', !!currentUser.token);
+    
+    // First, log the structure of a sample challenge to understand available fields
+    if (ctfdChallenges.length > 0) {
+        console.log('📋 SAMPLE CHALLENGE STRUCTURE:');
+        const sampleChallenge = ctfdChallenges[0];
+        console.log('Available fields:', Object.keys(sampleChallenge));
+        console.log('Full sample challenge data:', sampleChallenge);
+        
+        // Check for common requirement field names
+        const possibleRequirementFields = ['requirements', 'prerequisites', 'depends_on', 'dependencies'];
+        possibleRequirementFields.forEach(field => {
+            if (sampleChallenge[field] !== undefined) {
+                console.log(`🎯 Found potential requirement field '${field}':`, sampleChallenge[field]);
+            }
+        });
+    }
+    
+    const requirementPromises = ctfdChallenges.map(async (challenge) => {
+        const challengeId = String(challenge.id);
+        
+        console.log(`\n📡 FETCHING REQUIREMENTS: ${challenge.name} (ID: ${challenge.id})`);
+        console.log(`  - Challenge category: ${challenge.category}`);
+        console.log(`  - Challenge value: ${challenge.value}`);
+        console.log(`  - Challenge state: ${challenge.state}`);
+        
+        // Check if challenge already has requirements in the initial data
+        const possibleRequirementFields = ['requirements', 'prerequisites', 'depends_on', 'dependencies'];
+        let foundDirectRequirements = false;
+        
+        possibleRequirementFields.forEach(field => {
+            if (challenge[field] !== undefined && challenge[field] !== null) {
+                console.log(`  🎯 DIRECT REQUIREMENT FIELD '${field}' found:`, challenge[field]);
+                foundDirectRequirements = true;
+            }
+        });
+        
+        try {
+            // Try the requirements endpoint first
+            const requirementsEndpoint = `/api/v1/challenges/${challenge.id}/requirements`;
+            console.log(`  📞 Calling endpoint: ${requirementsEndpoint}`);
+            
+            const requirementsResponse = await callCTFdAPI(requirementsEndpoint);
+            
+            console.log(`  📦 RAW RESPONSE for ${challenge.name}:`);
+            console.log(`    - Success: ${requirementsResponse.success}`);
+            console.log(`    - Data type: ${typeof requirementsResponse.data}`);
+            console.log(`    - Data is array: ${Array.isArray(requirementsResponse.data)}`);
+            console.log(`    - Data length: ${requirementsResponse.data ? requirementsResponse.data.length : 'N/A'}`);
+            console.log(`    - Full data:`, requirementsResponse.data);
+            console.log(`    - Full response:`, requirementsResponse);
+            
+            // Check if response data is a direct array (legacy format)
+            if (requirementsResponse.data && Array.isArray(requirementsResponse.data)) {
+                const requirements = requirementsResponse.data.map(req => {
+                    console.log(`    🔗 Processing requirement item:`, req, `(type: ${typeof req})`);
+                    return String(req);
+                });
+                challengeMap[challengeId].dependencies = requirements;
+                
+                console.log(`  ✅ ${challenge.name}: API Requirements found (direct array): [${requirements.join(', ')}]`);
+                
+                return { challengeId, requirements, source: 'api' };
+            }
+            // Check if response data is an object with prerequisites property (CTFd format)
+            else if (requirementsResponse.data && typeof requirementsResponse.data === 'object' && 
+                     requirementsResponse.data.prerequisites && Array.isArray(requirementsResponse.data.prerequisites)) {
+                const requirements = requirementsResponse.data.prerequisites.map(req => {
+                    console.log(`    🔗 Processing prerequisite item:`, req, `(type: ${typeof req})`);
+                    return String(req);
+                });
+                challengeMap[challengeId].dependencies = requirements;
+                
+                console.log(`  ✅ ${challenge.name}: API Prerequisites found: [${requirements.join(', ')}]`);
+                
+                return { challengeId, requirements, source: 'api' };
+            }
+            // Handle single prerequisite in object format
+            else if (requirementsResponse.data && typeof requirementsResponse.data === 'object' && 
+                     requirementsResponse.data.prerequisites !== undefined && requirementsResponse.data.prerequisites !== null) {
+                const singlePrereq = requirementsResponse.data.prerequisites;
+                const requirements = [String(singlePrereq)];
+                challengeMap[challengeId].dependencies = requirements;
+                
+                console.log(`  ✅ ${challenge.name}: Single prerequisite found: [${requirements.join(', ')}]`);
+                
+                return { challengeId, requirements, source: 'api' };
+            }
+            // Handle other response formats
+            else if (requirementsResponse.data !== null && requirementsResponse.data !== undefined) {
+                console.log(`  ⚠️ ${challenge.name}: Non-standard response from requirements API:`);
+                console.log(`    - Type: ${typeof requirementsResponse.data}`);
+                console.log(`    - Value:`, requirementsResponse.data);
+                
+                // Try to convert single value to array
+                if (typeof requirementsResponse.data === 'string' || typeof requirementsResponse.data === 'number') {
+                    const requirements = [String(requirementsResponse.data)];
+                    challengeMap[challengeId].dependencies = requirements;
+                    console.log(`  🔄 ${challenge.name}: Converted single requirement to array: [${requirements.join(', ')}]`);
+                    return { challengeId, requirements, source: 'api-converted' };
+                }
+            }
+            
+            console.log(`  ❌ ${challenge.name}: Empty or invalid requirements API response`);
+            
+        } catch (error) {
+            console.error(`  💥 ${challenge.name}: API ERROR when fetching requirements:`);
+            console.error(`    - Error type: ${error.constructor.name}`);
+            console.error(`    - Error message: ${error.message}`);
+            console.error(`    - Error status: ${error.status}`);
+            console.error(`    - Full error:`, error);
+            
+            // Check if it's a 404 (endpoint doesn't exist) vs other errors
+            if (error.status === 404) {
+                console.log(`    🚫 Requirements endpoint not available for this CTFd instance`);
+                console.log(`    🔄 Trying alternative endpoints...`);
+                
+                // Try alternative endpoints that might exist in different CTFd versions
+                const alternativeEndpoints = [
+                    `/api/v1/challenges/${challenge.id}/prerequisites`,
+                    `/api/v1/challenges/${challenge.id}/dependencies`,
+                    `/api/v1/challenges/${challenge.id}` // Get full challenge details
+                ];
+                
+                let foundAlternative = false;
+                for (const altEndpoint of alternativeEndpoints) {
+                    try {
+                        console.log(`    📞 Trying alternative: ${altEndpoint}`);
+                        const altResponse = await callCTFdAPI(altEndpoint);
+                        
+                        if (altResponse.data) {
+                            console.log(`    ✅ Alternative endpoint success:`, altResponse.data);
+                            
+                            // Check if this endpoint returns dependencies in different formats
+                            const altData = altResponse.data;
+                            let altRequirements = [];
+                            
+                            if (Array.isArray(altData)) {
+                                altRequirements = altData.map(req => String(req));
+                            } else if (altData.requirements) {
+                                altRequirements = Array.isArray(altData.requirements) ? 
+                                    altData.requirements.map(req => String(req)) : [String(altData.requirements)];
+                            } else if (altData.prerequisites) {
+                                altRequirements = Array.isArray(altData.prerequisites) ? 
+                                    altData.prerequisites.map(req => String(req)) : [String(altData.prerequisites)];
+                            } else if (altData.dependencies) {
+                                altRequirements = Array.isArray(altData.dependencies) ? 
+                                    altData.dependencies.map(req => String(req)) : [String(altData.dependencies)];
+                            }
+                            
+                            if (altRequirements.length > 0) {
+                                challengeMap[challengeId].dependencies = altRequirements;
+                                console.log(`    🎯 Found dependencies via ${altEndpoint}: [${altRequirements.join(', ')}]`);
+                                foundAlternative = true;
+                                return { challengeId, requirements: altRequirements, source: `alternative-${altEndpoint}` };
+                            }
+                        }
+                    } catch (altError) {
+                        console.log(`    ❌ Alternative ${altEndpoint} failed:`, altError.message);
+                    }
+                }
+                
+                if (!foundAlternative) {
+                    console.log(`    🚫 No alternative endpoints worked`);
+                }
+                
+            } else if (error.status === 403) {
+                console.log(`    🔒 Access denied to requirements endpoint`);
+            } else if (error.status === 401) {
+                console.log(`    🔑 Authentication failed - token may be invalid`);
+            } else {
+                console.log(`    🌐 Network or server error`);
+            }
+        }
+        
+        // Fallback: check direct challenge properties
+        console.log(`  🔄 ${challenge.name}: Attempting fallback to direct challenge properties...`);
+        
+        let fallbackRequirements = [];
+        possibleRequirementFields.forEach(field => {
+            if (challenge[field] !== undefined && challenge[field] !== null) {
+                console.log(`    📋 Found fallback field '${field}':`, challenge[field]);
+                if (Array.isArray(challenge[field])) {
+                    fallbackRequirements = challenge[field].map(req => String(req));
+                } else if (typeof challenge[field] === 'string' || typeof challenge[field] === 'number') {
+                    fallbackRequirements = [String(challenge[field])];
+                }
+                console.log(`    🎯 Processed fallback requirements: [${fallbackRequirements.join(', ')}]`);
+            }
+        });
+        
+        challengeMap[challengeId].dependencies = fallbackRequirements;
+        
+        console.log(`  📝 ${challenge.name}: Final dependencies: [${fallbackRequirements.join(', ')}] (source: fallback)`);
+        
+        return { challengeId, requirements: fallbackRequirements, source: 'fallback' };
+    });
+    
+    // Attendre toutes les requêtes de requirements
+    console.log('\n⏳ Waiting for all requirement requests to complete...');
+    const allRequirements = await Promise.all(requirementPromises);
+    
+    // Analyze the results
+    console.log('\n📊 DEPENDENCY FETCHING SUMMARY:');
+    const sourceCounts = { api: 0, 'api-converted': 0, fallback: 0 };
+    const totalDependencies = allRequirements.reduce((total, req) => {
+        sourceCounts[req.source] = (sourceCounts[req.source] || 0) + 1;
+        return total + req.requirements.length;
+    }, 0);
+    
+    console.log(`  - Total challenges processed: ${allRequirements.length}`);
+    console.log(`  - Successfully fetched from API: ${sourceCounts.api || 0}`);
+    console.log(`  - Converted from API: ${sourceCounts['api-converted'] || 0}`);
+    console.log(`  - Used fallback: ${sourceCounts.fallback || 0}`);
+    console.log(`  - Total dependencies found: ${totalDependencies}`);
+    
+    // List challenges with dependencies
+    const challengesWithDeps = allRequirements.filter(req => req.requirements.length > 0);
+    console.log(`\n🔗 CHALLENGES WITH DEPENDENCIES (${challengesWithDeps.length}):`); 
+    challengesWithDeps.forEach(req => {
+        const challengeName = challengeMap[req.challengeId]?.name || 'Unknown';
+        console.log(`  - ${challengeName}: [${req.requirements.join(', ')}] (${req.source})`);
+    });
+    
+    if (challengesWithDeps.length === 0) {
+        console.log('  ⚠️ NO DEPENDENCIES FOUND! This will result in all challenges being at level 0.');
+        console.log('  This could mean:');
+        console.log('    1. CTFd instance has no challenge dependencies configured');
+        console.log('    2. Requirements API endpoint is not available');
+        console.log('    3. Current user lacks permissions to access requirements');
+        console.log('    4. CTFd version does not support challenge dependencies');
+        
+        // Test our dependency logic with known data to ensure it works
+        console.log('\\n🧪 TESTING DEPENDENCY LOGIC...');
+        validateDependencyLogic();
+    }
+    
+    // Calculer les niveaux hiérarchiques avec DEBUG détaillé
+    const levels = {};
+    console.log('\\n🧮 ===== LEVEL CALCULATION PHASE =====');
+    console.log(`📋 Total challenges to process: ${Object.keys(challengeMap).length}`);
+    console.log(`🗂️ Challenge IDs: [${Object.keys(challengeMap).join(', ')}]`);
+    
+    // First, show a summary of all dependencies
+    console.log('\\n📊 DEPENDENCY SUMMARY:');
+    Object.entries(challengeMap).forEach(([id, challenge]) => {
+        const depCount = (challenge.dependencies || []).length;
+        const depsStr = depCount > 0 ? `[${challenge.dependencies.join(', ')}]` : 'none';
+        console.log(`  ${id}: ${challenge.name} - deps: ${depsStr} (${depCount} total)`);
+    });
+    
+    console.log('\\n🔢 CALCULATING LEVELS FOR ALL CHALLENGES:');
+    Object.keys(challengeMap).forEach((challengeId, index) => {
+        console.log(`\\n--- [${index + 1}/${Object.keys(challengeMap).length}] Processing Challenge: ${challengeId} ---`);
+        const level = calculateChallengeLevel(challengeId, challengeMap, levels);
+        console.log(`✅ Final level for ${challengeMap[challengeId].name} (${challengeId}): ${level}`);
+        console.log(`📈 Current levels state: ${JSON.stringify(levels, null, 2)}`);
+    });
+    
+    console.log('=== NIVEAUX HIÉRARCHIQUES ===');
+    console.log('Niveaux calculés:', levels);
+    console.log(`Niveau maximum: ${Math.max(...Object.values(levels), 0)}`);
+    console.log('Challenges avec dépendances:', Object.entries(challengeMap).filter(([id, ch]) => ch.dependencies.length > 0).length);
+    
+    // Afficher les dépendances de chaque challenge avec DEBUG
+    console.log('\\n🔗 DETAILED DEPENDENCY ANALYSIS:');
+    Object.entries(challengeMap).forEach(([id, ch]) => {
+        console.log(`\\n📋 Challenge: ${ch.name} (ID: ${id}, Level: ${levels[id]})`);
+        console.log(`  📊 Position: (${ch.position.x}, ${ch.position.y})`);
+        console.log(`  🎯 Points: ${ch.points}, Category: ${ch.category}`);
+        
+        if (ch.dependencies.length > 0) {
+            console.log(`  🔗 Dependencies (${ch.dependencies.length}):`);
+            ch.dependencies.forEach((depId, index) => {
+                const dep = challengeMap[depId];
+                if (dep) {
+                    console.log(`    [${index + 1}] ${dep.name} (ID: ${depId}, Level: ${levels[depId]})`);
+                } else {
+                    console.warn(`    [${index + 1}] ❌ MISSING: ID ${depId} not found in challengeMap`);
+                }
+            });
+        } else {
+            console.log(`  🌱 ROOT CHALLENGE (no dependencies)`);
+        }
+    });
+    
+    // Validate level consistency
+    console.log('\\n🔍 LEVEL CONSISTENCY VALIDATION:');
+    let inconsistencyFound = false;
+    Object.entries(challengeMap).forEach(([id, ch]) => {
+        if (ch.dependencies.length > 0) {
+            const challengeLevel = levels[id];
+            const maxDepLevel = Math.max(...ch.dependencies.map(depId => levels[depId] || 0));
+            const expectedLevel = maxDepLevel + 1;
+            
+            if (challengeLevel !== expectedLevel) {
+                console.error(`  ❌ INCONSISTENCY: ${ch.name} has level ${challengeLevel}, but should be ${expectedLevel} based on dependencies`);
+                inconsistencyFound = true;
+            } else {
+                console.log(`  ✅ ${ch.name}: Level ${challengeLevel} is correct`);
+            }
+        }
+    });
+    
+    if (!inconsistencyFound) {
+        console.log('  🎉 All challenge levels are consistent!');
+    }
+    
+    // Calculer le niveau maximum
+    const maxLevel = Math.max(...Object.values(levels), 0);
+    console.log(`NIVEAU MAXIMUM FINAL: ${maxLevel}`);
+    
+    // ALGORITHME SIMPLE ET EFFICACE
+    console.log('=== POSITIONNEMENT DES CHALLENGES ===');
+    
+    // Grouper par niveau avec DEBUG détaillé
+    const levelChallenges = {};
+    for (let i = 0; i <= maxLevel; i++) {
+        levelChallenges[i] = [];
+    }
+    
+    console.log('=== GROUPEMENT PAR NIVEAU ===');
+    Object.entries(challengeMap).forEach(([id, challenge]) => {
+        const level = levels[id] || 0;
+        levelChallenges[level].push(id);
+        console.log(`${challenge.name} assigné au niveau ${level}`);
+    });
+    
+    // Afficher la distribution par niveau
+    for (let level = 0; level <= maxLevel; level++) {
+        console.log(`Niveau ${level}: ${levelChallenges[level].length} challenges - [${levelChallenges[level].map(id => challengeMap[id].name).join(', ')}]`);
+    }
+    
+    // ✅ PROFESSIONAL POSITIONING ALGORITHM - TOP-DOWN HIERARCHY
+    const CANVAS_WIDTH = 1400; // Wider canvas for better distribution
+    const LEVEL_HEIGHT = 200;  // More vertical space between levels
+    const CHALLENGE_WIDTH = 140;
+    const START_Y = 60;        // Start near top for Level 0 (ROOT)
+    const MIN_SPACING = 180;   // Minimum horizontal spacing
+    
+    console.log('\\n🎨 ===== POSITIONING ALGORITHM =====');
+    console.log(`📐 Canvas width: ${CANVAS_WIDTH}px`);
+    console.log(`📏 Level height: ${LEVEL_HEIGHT}px`);
+    console.log(`📦 Challenge width: ${CHALLENGE_WIDTH}px`);
+    console.log(`📍 Start Y: ${START_Y}px`);
+    console.log(`↔️ Min spacing: ${MIN_SPACING}px`);
+    console.log(`📊 Level 0 (ROOT) at Y=${START_Y} - Dependencies flow DOWNWARD`);
+    
+    for (let level = 0; level <= maxLevel; level++) {
+        const challenges = levelChallenges[level];
+        if (challenges.length === 0) continue;
+        
+        // ✅ CORRECT HIERARCHY: Level 0 = TOP (smallest Y), Level N = BOTTOM (largest Y)
+        const y = START_Y + (level * LEVEL_HEIGHT);
+        
+        // Smart horizontal distribution
+        const totalWidth = CANVAS_WIDTH - 160; // Better margins
+        let spacing, startX;
+        
+        if (challenges.length === 1) {
+            // Single challenge: center horizontally
+            startX = (CANVAS_WIDTH - CHALLENGE_WIDTH) / 2;
+            spacing = 0;
+        } else {
+            // Multiple challenges: distribute with optimal spacing
+            const optimalSpacing = totalWidth / (challenges.length - 1);
+            spacing = Math.max(MIN_SPACING, Math.min(optimalSpacing, 350)); // Cap max spacing
+            
+            const totalUsedWidth = (challenges.length - 1) * spacing;
+            startX = (CANVAS_WIDTH - totalUsedWidth) / 2;
+        }
+        
+        console.log(`\\n📍 LEVEL ${level} POSITIONING:`);
+        console.log(`  📊 Challenge count: ${challenges.length}`);
+        console.log(`  📏 Y position: ${y}px`);
+        console.log(`  📐 Start X: ${startX}px`);
+        console.log(`  ↔️ Spacing: ${spacing}px`);
+        
+        // Position each challenge in this level
+        challenges.forEach((id, index) => {
+            const x = challenges.length === 1 ? startX : startX + (index * spacing);
+            
+            console.log(`    [${index + 1}/${challenges.length}] Positioning ${challengeMap[id].name}:`);
+            console.log(`      - Calculation: ${challenges.length === 1 ? 'Single (centered)' : `startX(${startX}) + index(${index}) * spacing(${spacing})`} = ${x}`);
+            
+            challengeMap[id].position = {
+                x: Math.round(x),
+                y: y
+            };
+            
+            const levelType = level === 0 ? 'ROOT' : `LEVEL-${level}`;
+            console.log(`      - Final position: (${challengeMap[id].position.x}, ${challengeMap[id].position.y})`);
+            console.log(`      ✅ ${levelType}: ${challengeMap[id].name} positioned`);
+        });
+    }
+    
+    console.log('\\n📈 FINAL HIERARCHY SUMMARY:');
+    console.log(`  🎯 Total challenges: ${Object.keys(challengeMap).length}`);
+    console.log(`  📊 Max level: ${maxLevel}`);
+    console.log(`  🔗 Challenges with dependencies: ${Object.entries(challengeMap).filter(([id, ch]) => ch.dependencies.length > 0).length}`);
+    console.log(`  🌱 Root challenges (level 0): ${levelChallenges[0]?.length || 0}`);
+    
+    // DEBUG: Final position validation
+    console.log('\\n🎨 FINAL POSITION VALIDATION:');
+    let positionErrors = 0;
+    Object.entries(challengeMap).forEach(([id, ch]) => {
+        if (typeof ch.position.x !== 'number' || typeof ch.position.y !== 'number') {
+            console.error(`  ❌ ${ch.name}: Invalid position (${ch.position.x}, ${ch.position.y})`);
+            positionErrors++;
+        } else if (ch.position.x < 0 || ch.position.y < 0) {
+            console.warn(`  ⚠️ ${ch.name}: Negative position (${ch.position.x}, ${ch.position.y})`);
+        } else {
+            console.log(`  ✅ ${ch.name}: Valid position (${ch.position.x}, ${ch.position.y}) at level ${levels[id] || 0}`);
+        }
+    });
+    
+    if (positionErrors === 0) {
+        console.log('  🎉 All challenge positions are valid!');
+    } else {
+        console.error(`  💥 Found ${positionErrors} position errors!`);
+    }
+    
+    // Show distribution by level
+    console.log('\\n📊 FINAL LEVEL DISTRIBUTION:');
+    for (let level = 0; level <= maxLevel; level++) {
+        const challenges = levelChallenges[level];
+        if (challenges.length > 0) {
+            console.log(`  Level ${level}: ${challenges.length} challenges`);
+            challenges.forEach(id => {
+                const ch = challengeMap[id];
+                console.log(`    - ${ch.name} at (${ch.position.x}, ${ch.position.y})`);
+            });
+        }
+    }
+    
+    // Si tous les challenges sont au niveau 0 (pas de dépendances), créer une hiérarchie artificielle
+    if (maxLevel === 0 && Object.keys(challengeMap).length > 5) {
+        console.log('=== AUCUNE DÉPENDANCE TROUVÉE ===');
+        console.log('Création d\'une hiérarchie artificielle basée sur les points et catégories...');
+        
+        // Option 1: Créer des dépendances artificielles basées sur les points
+        const challengesByCategory = {};
+        Object.entries(challengeMap).forEach(([id, challenge]) => {
+            const cat = challenge.category || 'default';
+            if (!challengesByCategory[cat]) challengesByCategory[cat] = [];
+            challengesByCategory[cat].push({ id, challenge });
+        });
+        
+        let artificialDependenciesCreated = 0;
+        
+        Object.entries(challengesByCategory).forEach(([category, challenges]) => {
+            if (challenges.length < 2) return; // Pas assez de challenges pour créer des dépendances
+            
+            // Trier par points (croissant)
+            challenges.sort((a, b) => a.challenge.points - b.challenge.points);
+            
+            // Créer une chaîne de dépendances simple
+            for (let i = 1; i < challenges.length; i++) {
+                const currentChallenge = challenges[i];
+                const previousChallenge = challenges[i - 1];
+                
+                // Le challenge actuel dépend du précédent
+                challengeMap[currentChallenge.id].dependencies = [previousChallenge.id];
+                artificialDependenciesCreated++;
+                
+                console.log(`  Dépendance créée: ${currentChallenge.challenge.name} dépend de ${previousChallenge.challenge.name}`);
+            }
+        });
+        
+        if (artificialDependenciesCreated > 0) {
+            console.log(`${artificialDependenciesCreated} dépendances artificielles créées`);
+            
+            // Recalculer les niveaux avec les nouvelles dépendances
+            const newLevels = {};
+            Object.keys(challengeMap).forEach(challengeId => {
+                calculateChallengeLevel(challengeId, challengeMap, newLevels);
+            });
+            
+            const newMaxLevel = Math.max(...Object.values(newLevels), 0);
+            console.log(`Nouveaux niveaux après dépendances artificielles:`, newLevels);
+            console.log(`Nouveau niveau maximum: ${newMaxLevel}`);
+            
+            // Repositionner avec les nouveaux niveaux
+            if (newMaxLevel > 0) {
+                const newLevelChallenges = {};
+                for (let i = 0; i <= newMaxLevel; i++) {
+                    newLevelChallenges[i] = [];
+                }
+                
+                Object.entries(challengeMap).forEach(([id, challenge]) => {
+                    const level = newLevels[id] || 0;
+                    newLevelChallenges[level].push(id);
+                });
+                
+                // Repositionner avec le même algorithme
+                for (let level = 0; level <= newMaxLevel; level++) {
+                    const challenges = newLevelChallenges[level];
+                    if (challenges.length === 0) continue;
+                    
+                    const y = START_Y + (level * LEVEL_HEIGHT);
+                    const totalWidth = CANVAS_WIDTH - 200;
+                    let spacing = challenges.length > 1 ? Math.max(MIN_SPACING, totalWidth / (challenges.length - 1)) : 0;
+                    
+                    if (spacing > 300) spacing = MIN_SPACING;
+                    
+                    const totalUsedWidth = (challenges.length - 1) * spacing;
+                    const startX = challenges.length === 1 ? CANVAS_WIDTH / 2 - CHALLENGE_WIDTH / 2 : 
+                                   (CANVAS_WIDTH - totalUsedWidth) / 2;
+                    
+                    challenges.forEach((id, index) => {
+                        const x = challenges.length === 1 ? startX : startX + (index * spacing);
+                        challengeMap[id].position = { x: Math.round(x), y: y };
+                        console.log(`  Repositionné ${challengeMap[id].name}: niveau ${level}, (${x}, ${y})`);
+                    });
+                }
+                
+                return; // Sortir de la fonction, on a terminé
+            }
+        }
+        
+        // Fallback: organisation par catégorie si pas de dépendances artificielles possibles
+        console.log('Fallback: organisation par catégorie en grille');
+        
+        const categoryGroups = {};
+        Object.entries(challengeMap).forEach(([id, challenge]) => {
+            const cat = challenge.category || 'default';
+            if (!categoryGroups[cat]) categoryGroups[cat] = [];
+            categoryGroups[cat].push(id);
+        });
+        
+        const categories = Object.keys(categoryGroups).sort();
+        const challengesPerRow = 6;
+        const rowHeight = 140;
+        const colWidth = 180;
+        const startX = 50;
+        const startY = 50;
+        
+        let currentY = startY;
+        
+        categories.forEach((category, catIndex) => {
+            const challenges = categoryGroups[category];
+            console.log(`Catégorie ${category}: ${challenges.length} challenges`);
+            
+            challenges.forEach((challengeId, index) => {
+                const row = Math.floor(index / challengesPerRow);
+                const col = index % challengesPerRow;
+                
+                challengeMap[challengeId].position = {
+                    x: startX + (col * colWidth),
+                    y: currentY + (row * rowHeight)
+                };
+            });
+            
+            const rowsInCategory = Math.ceil(challenges.length / challengesPerRow);
+            currentY += rowsInCategory * rowHeight + 40;
+        });
+    }
+}
+
+function selectAllTeams() {
+    if (!userPermissions.canViewAllTeams) return;
+    selectedTeams = teams.map(t => t.name);
+    updateVisualization();
+}
+
+function deselectAllTeams() {
+    if (!userPermissions.canViewAllTeams) return;
+    selectedTeams = [];
+    updateVisualization();
+}
+
+function selectSingleTeam() {
+    if (!userPermissions.canViewAllTeams) return;
+    // Sélectionner seulement la première équipe ou celle avec le meilleur score
+    const bestTeam = teams.reduce((best, team) => {
+        const teamScore = getTeamSolvedCount(team.name);
+        const bestScore = getTeamSolvedCount(best.name);
+        return teamScore > bestScore ? team : best;
+    }, teams[0]);
+    
+    selectedTeams = [bestTeam.name];
+    updateVisualization();
+}
+
+// ===== FONCTIONS DE NAVIGATION ET ZOOM =====
+
+// Clean transform function for unified SVG+challenges container
+function updateTransform() {
+    const wrapper = document.getElementById('transform-wrapper');
+    
+    if (wrapper) {
+        // Apply transform to the unified wrapper containing both challenges and SVG
+        const transform = `translate(${currentPan.x}px, ${currentPan.y}px) scale(${currentZoom})`;
+        wrapper.style.transform = transform;
+        wrapper.style.transformOrigin = '0 0';
+        
+        // 🔧 Update wrapper dimensions to match content
+        updateWrapperDimensions();
+    }
+    
+    updateNavigationInfo();
+}
+
+// 🔧 NEW FUNCTION: Update transform wrapper dimensions based on content
+function updateWrapperDimensions() {
+    const wrapper = document.getElementById('transform-wrapper');
+    if (!wrapper) return;
+    
+    const viewport = calculateSVGViewport();
+    
+    // Ensure wrapper is large enough to contain all content
+    const wrapperWidth = Math.max(1400, viewport.width);
+    const wrapperHeight = Math.max(1000, viewport.height);
+    
+    wrapper.style.width = `${wrapperWidth}px`;
+    wrapper.style.height = `${wrapperHeight}px`;
+    
+    console.log(`🔧 Updated wrapper dimensions: ${wrapperWidth}×${wrapperHeight}`);
+}
+
+function updateNavigationInfo() {
+    const zoomElement = document.getElementById('zoom-level');
+    const panElement = document.getElementById('pan-position');
+    
+    if (zoomElement) {
+        zoomElement.textContent = Math.round(currentZoom * 100) + '%';
+    }
+    
+    if (panElement) {
+        panElement.textContent = `${Math.round(currentPan.x)}, ${Math.round(currentPan.y)}`;
+    }
+}
+
+function zoomIn() {
+    if (d3SystemReady && window.zoomInD3 && typeof d3Data !== 'undefined' && d3Data.svg) {
+        zoomInD3();
+    } else {
+        currentZoom = Math.min(currentZoom * 1.2, 3);
+        updateTransform();
+    }
+}
+
+function zoomOut() {
+    if (d3SystemReady && window.zoomOutD3 && typeof d3Data !== 'undefined' && d3Data.svg) {
+        zoomOutD3();
+    } else {
+        currentZoom = Math.max(currentZoom / 1.2, 0.3);
+        updateTransform();
+    }
+}
+
+function resetView() {
+    if (d3SystemReady && window.resetViewD3 && typeof d3Data !== 'undefined' && d3Data.svg) {
+        resetViewD3();
+    } else {
+        currentZoom = 1;
+        currentPan = { x: 0, y: 0 };
+        updateTransform();
+    }
+}
+
+function fitToScreen() {
+    // Use D3 fitToScreen if available
+    if (d3SystemReady && window.fitToScreenD3 && typeof d3Data !== 'undefined' && d3Data.svg) {
+        fitToScreenD3();
+        return;
+    }
+    
+    // Legacy fitToScreen implementation
+    const mapContainer = document.getElementById('map-container');
+    const challengesContainer = document.getElementById('challenges-container');
+    
+    if (!mapContainer || !challengesContainer) return;
+    
+    // Calculer les dimensions du contenu
+    const challenges = challengesContainer.querySelectorAll('.challenge-node');
+    if (challenges.length === 0) return;
+    
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    
+    challenges.forEach(challenge => {
+        const rect = challenge.getBoundingClientRect();
+        const containerRect = challengesContainer.getBoundingClientRect();
+        
+        const x = rect.left - containerRect.left;
+        const y = rect.top - containerRect.top;
+        
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + rect.width);
+        maxY = Math.max(maxY, y + rect.height);
+    });
+    
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+    const containerWidth = mapContainer.clientWidth;
+    const containerHeight = mapContainer.clientHeight;
+    
+    // Calculer le zoom pour ajuster le contenu
+    const scaleX = containerWidth / (contentWidth + 100); // +100 pour les marges
+    const scaleY = containerHeight / (contentHeight + 100);
+    currentZoom = Math.min(scaleX, scaleY, 1); // Ne pas zoomer plus que 100%
+    
+    // Centrer le contenu
+    currentPan.x = (containerWidth - contentWidth * currentZoom) / 2 - minX * currentZoom;
+    currentPan.y = (containerHeight - contentHeight * currentZoom) / 2 - minY * currentZoom;
+    
+    updateTransform();
+}
+
+function initializeMapNavigation() {
+    const mapContainer = document.getElementById('map-container');
+    if (!mapContainer) return;
+    
+    // ✅ PROFESSIONAL ZOOM with mouse position focus
+    mapContainer.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+        const newZoom = Math.min(Math.max(currentZoom * zoomFactor, 0.2), 4); // Extended zoom range
+        
+        // Zoom centered on mouse position for better UX
+        const rect = mapContainer.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        const zoomChange = newZoom / currentZoom;
+        currentPan.x = mouseX - (mouseX - currentPan.x) * zoomChange;
+        currentPan.y = mouseY - (mouseY - currentPan.y) * zoomChange;
+        currentZoom = newZoom;
+        
+        // ✅ Update transform with immediate visual feedback
+        updateTransform();
+    });
+    
+    // 🎯 PROFESSIONAL DRAG handling with better target detection
+    mapContainer.addEventListener('mousedown', (e) => {
+        // Allow dragging when clicking on map background, SVG, or challenges container
+        const isValidDragTarget = e.target === mapContainer || 
+                                  e.target.closest('#challenges-container') ||
+                                  e.target.id === 'dependencies-svg';
+        
+        if (isValidDragTarget && !e.target.closest('.challenge-node')) {
+            isDragging = true;
+            dragStart.x = e.clientX;
+            dragStart.y = e.clientY;
+            lastPan.x = currentPan.x;
+            lastPan.y = currentPan.y;
+            
+            mapContainer.style.cursor = 'grabbing';
+            e.preventDefault();
+        }
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+            currentPan.x = lastPan.x + (e.clientX - dragStart.x);
+            currentPan.y = lastPan.y + (e.clientY - dragStart.y);
+            updateTransform();
+        }
+    });
+    
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            mapContainer.style.cursor = 'grab';
+        }
+    });
+    
+    // Support tactile pour les appareils mobiles
+    let lastTouchDistance = 0;
+    
+    mapContainer.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+            const touch1 = e.touches[0];
+            const touch2 = e.touches[1];
+            lastTouchDistance = Math.sqrt(
+                Math.pow(touch2.clientX - touch1.clientX, 2) +
+                Math.pow(touch2.clientY - touch1.clientY, 2)
+            );
+        } else if (e.touches.length === 1) {
+            isDragging = true;
+            dragStart.x = e.touches[0].clientX;
+            dragStart.y = e.touches[0].clientY;
+            lastPan.x = currentPan.x;
+            lastPan.y = currentPan.y;
+        }
+        e.preventDefault();
+    });
+    
+    mapContainer.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2) {
+            const touch1 = e.touches[0];
+            const touch2 = e.touches[1];
+            const currentDistance = Math.sqrt(
+                Math.pow(touch2.clientX - touch1.clientX, 2) +
+                Math.pow(touch2.clientY - touch1.clientY, 2)
+            );
+            
+            if (lastTouchDistance > 0) {
+                const zoomFactor = currentDistance / lastTouchDistance;
+                currentZoom = Math.min(Math.max(currentZoom * zoomFactor, 0.3), 3);
+                updateTransform();
+            }
+            
+            lastTouchDistance = currentDistance;
+        } else if (e.touches.length === 1 && isDragging) {
+            currentPan.x = lastPan.x + (e.touches[0].clientX - dragStart.x);
+            currentPan.y = lastPan.y + (e.touches[0].clientY - dragStart.y);
+            updateTransform();
+        }
+        e.preventDefault();
+    });
+    
+    mapContainer.addEventListener('touchend', () => {
+        isDragging = false;
+        lastTouchDistance = 0;
+    });
+}
+
+/**
+ * Wait for essential DOM elements to be ready
+ */
+async function waitForEssentialElements(timeout = 10000) {
+    const essentialElements = [
+        'login-modal',
+        'container'
+    ];
+    
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+        const allPresent = essentialElements.every(id => {
+            const element = document.getElementById(id);
+            return element && element.offsetParent !== null; // Check if element is visible
+        });
+        
+        if (allPresent) {
+            console.log('✅ All essential DOM elements are ready');
+            return true;
+        }
+        
+        // Wait 50ms before checking again
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    
+    console.warn('⚠️ Some essential elements not ready after timeout:', 
+        essentialElements.filter(id => !document.getElementById(id)));
+    return false;
+}
+
+/**
+ * Run startup verification to ensure systems are working properly
+ */
+function runStartupVerification() {
+    console.log('🔍 Running startup verification...');
+    
+    const checks = {
+        'DOM Ready': () => document.readyState === 'complete',
+        'Main Container': () => document.getElementById('container') !== null,
+        'Map Container': () => document.getElementById('map-container') !== null,
+        'D3 Library': () => typeof d3 !== 'undefined',
+        'Notification System': () => false // Removed
+    };
+    
+    let allPassed = true;
+    for (const [checkName, checkFunction] of Object.entries(checks)) {
+        try {
+            const result = checkFunction();
+            console.log(`  ${result ? '✅' : '❌'} ${checkName}: ${result}`);
+            if (!result) allPassed = false;
+        } catch (error) {
+            console.log(`  ❌ ${checkName}: ERROR - ${error.message}`);
+            allPassed = false;
+        }
+    }
+    
+    if (allPassed) {
+        console.log('✅ All startup checks passed');
+    } else {
+        console.warn('⚠️ Some startup checks failed - application may have limited functionality');
+    }
+    
+    // Test basic API readiness (not actual connection)
+    if (typeof fetch === 'function') {
+        console.log('  ✅ API capabilities available');
+    } else {
+        console.warn('  ⚠️ Fetch API not available - old browser?');
+    }
+}
+
+// Initialisation with enhanced error handling
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('🚀 Starting application initialization...');
+    
+    // Wait for all essential DOM elements to be ready
+    await waitForEssentialElements();
+    
+    // D3.js will be initialized after login when container is visible
+    
+    // Run startup verification
+    runStartupVerification();
+    
+    // Initialiser la navigation de la carte
+    initializeMapNavigation();
+    
+    // Initialize drag & drop system
+    initializeDragAndDrop();
+    
+    // Récupérer l'URL CTFd depuis le serveur si on utilise le proxy
+    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
+        try {
+            const response = await fetch('/config');
+            const config = await response.json();
+            
+            // Pré-remplir le champ URL avec l'URL fournie par CTFD_URL
+            const urlInput = document.getElementById('ctfd-url');
+            if (urlInput && config.ctfdUrl) {
+                urlInput.value = config.ctfdUrl;
+            }
+        } catch (error) {
+            console.log('Impossible de récupérer la configuration:', error);
+            // Pas grave, on garde la valeur par défaut
+        }
+    }
+}); // End of initialization

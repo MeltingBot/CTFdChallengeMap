@@ -1,0 +1,17 @@
+{
+  "name": "ctfd-map-proxy",
+  "version": "1.0.0",
+  "description": "Proxy server pour CTFd Map",
+  "main": "proxy-server.js",
+  "scripts": {
+    "start": "node proxy-server.js",
+    "dev": "nodemon proxy-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^2.0.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
