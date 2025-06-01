@@ -338,6 +338,12 @@
             margin-bottom: 2px;
             line-height: 1.2;
             color: #1f2937;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 130px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .challenge-category {
@@ -347,6 +353,12 @@
             margin-bottom: 4px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 130px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .challenge-points {
@@ -1026,6 +1038,7 @@
                     <span id="api-status-text">Déconnecté</span>
                     <button class="refresh-btn" onclick="refreshData()">🔄</button>
                 </div>
+                <div id="ctfd-url-display" style="margin-top: 8px; font-size: 11px; color: #6b7280; word-break: break-all;"></div>
                 <div id="api-error" class="error-message" style="display: none;"></div>
                 
                 <!-- Instructions pour usage local -->

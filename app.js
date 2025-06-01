@@ -272,6 +272,13 @@ function setSelectedTeams(newTeams) {
     selectedTeams = newTeams;
     window.selectedTeams = newTeams;
     
+    // Sauvegarder dans sessionStorage pour persister après reconnexion
+    try {
+        sessionStorage.setItem('selectedTeams', JSON.stringify(newTeams));
+    } catch (e) {
+        debugLog('Impossible de sauvegarder les équipes sélectionnées:', e);
+    }
+    
     // Update team paths if parcours mode is active
     if (window.parcoursMode && window.updateTeamPaths) {
         // Small delay to ensure DOM is updated
@@ -377,9 +384,21 @@ async function loadChallengeSolves(challengeId) {
             const teamName = currentUser.teamName;
             if (teamName && teamProgress[teamName] && teamProgress[teamName][challengeId]) {
                 const solve = teamProgress[teamName][challengeId];
-                if (solve.status === 'solved') {
+                if (solve.solved === true || solve.status === 'solved') {
                     const team = teams.find(t => t.name === teamName);
-                    const solveDate = new Date(solve.date);
+                    
+                    // Vérifier que la date existe et est valide
+                    let solveDate = null;
+                    if (solve.date) {
+                        solveDate = new Date(solve.date);
+                        if (isNaN(solveDate.getTime())) {
+                            debugLog(`⚠️ Date invalide pour ${teamName} sur challenge ${challengeId}: ${solve.date}`);
+                            solveDate = new Date(); // Utiliser la date actuelle comme fallback
+                        }
+                    } else {
+                        debugLog(`⚠️ Pas de date pour ${teamName} sur challenge ${challengeId}`);
+                        solveDate = new Date(); // Utiliser la date actuelle comme fallback
+                    }
                     
                     // Calculer le temps relatif depuis le premier solve
                     let relativeTime = null;
@@ -447,11 +466,24 @@ async function loadChallengeSolves(challengeId) {
             
             if (teamProgress[teamName] && teamProgress[teamName][challengeId]) {
                 const solve = teamProgress[teamName][challengeId];
-                if (solve.status === 'solved') {
+                if (solve.solved === true || solve.status === 'solved') {
+                    // Vérifier que la date existe et est valide
+                    let solveDate = null;
+                    if (solve.date) {
+                        solveDate = new Date(solve.date);
+                        if (isNaN(solveDate.getTime())) {
+                            debugLog(`⚠️ Date invalide pour ${teamName}: ${solve.date}`);
+                            solveDate = new Date(); // Utiliser la date actuelle comme fallback
+                        }
+                    } else {
+                        debugLog(`⚠️ Pas de date pour ${teamName}`);
+                        solveDate = new Date(); // Utiliser la date actuelle comme fallback
+                    }
+                    
                     selectedTeamSolves.push({
                         teamName,
                         solve,
-                        date: new Date(solve.date)
+                        date: solveDate
                     });
                     debugLog(`    ✅ Team ${teamName} solved this challenge`);
                 }
@@ -534,9 +566,14 @@ function findPreviousSolveForTeam(teamName, currentChallengeId, currentSolveDate
     
     for (const [challId, progress] of Object.entries(teamSolves)) {
         // Ignorer le challenge actuel et les non-résolus
-        if (challId === currentChallengeId || progress.status !== 'solved') continue;
+        if (challId === currentChallengeId || 
+            !(progress.solved === true || progress.status === 'solved')) continue;
+        
+        if (!progress.date) continue; // Ignorer si pas de date
         
         const solveDate = new Date(progress.date);
+        if (isNaN(solveDate.getTime())) continue; // Ignorer si date invalide
+        
         // Chercher les solves qui sont avant la date actuelle
         if (solveDate < currentSolveDate) {
             if (!mostRecentDate || solveDate > mostRecentDate) {
@@ -558,8 +595,10 @@ function findFirstSolveForTeam(teamName) {
     let firstSolveDate = null;
     
     for (const [challId, progress] of Object.entries(teamSolves)) {
-        if (progress.status === 'solved' && progress.date) {
+        if ((progress.solved === true || progress.status === 'solved') && progress.date) {
             const solveDate = new Date(progress.date);
+            if (isNaN(solveDate.getTime())) continue; // Ignorer si date invalide
+            
             if (!firstSolveDate || solveDate < firstSolveDate) {
                 firstSolve = { challengeId: challId, ...progress };
                 firstSolveDate = solveDate;
@@ -701,6 +740,13 @@ function formatTimeDiff(ms) {
     return `${seconds}s`;
 }
 
+// Tronquer le texte trop long
+function truncateText(text, maxLength) {
+    if (!text) return '';
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength - 3) + '...';
+}
+
 // Format détaillé pour la modale
 function formatTimeDiffDetailed(ms) {
     const seconds = Math.floor(ms / 1000);
@@ -737,7 +783,7 @@ function closeChallengeModal() {
 }
 
 
-// Charger toutes les submissions d'une équipe
+// Charger toutes les submissions d'une équipe ou d'un utilisateur
 async function loadTeamSubmissions(teamId) {
     if (teamSubmissionsCache[teamId]) {
         debugLog(`📦 Submissions depuis cache pour team ${teamId}`);
@@ -746,7 +792,24 @@ async function loadTeamSubmissions(teamId) {
     
     try {
         debugLog(`🔄 Chargement des submissions pour team ${teamId}...`);
-        const response = await callCTFdAPI(`/api/v1/teams/${teamId}/fails?per_page=100`);
+        
+        let response;
+        // Vérifier si c'est un ID utilisateur (mode individuel)
+        if (String(teamId).startsWith('user_')) {
+            // Mode individuel - utiliser l'endpoint utilisateur
+            const userId = teamId.replace('user_', '');
+            try {
+                // Essayer d'abord l'endpoint fails pour utilisateur
+                response = await callCTFdAPI(`/api/v1/users/${userId}/fails?per_page=100`);
+            } catch (error) {
+                // Si ça échoue, essayer l'endpoint submissions général avec filtre
+                debugLog(`Endpoint user fails non disponible, utilisation de submissions...`);
+                response = await callCTFdAPI(`/api/v1/submissions?user_id=${userId}&type=incorrect&per_page=100`);
+            }
+        } else {
+            // Mode équipe standard
+            response = await callCTFdAPI(`/api/v1/teams/${teamId}/fails?per_page=100`);
+        }
         
         if (response && response.data) {
             // Organiser les submissions par challenge
@@ -789,7 +852,8 @@ async function loadChallengeAttempts(challengeId) {
     for (const teamName of selectedTeams) {
         if (teamProgress[teamName] && 
             teamProgress[teamName][challengeId] && 
-            teamProgress[teamName][challengeId].status === 'solved') {
+            (teamProgress[teamName][challengeId].solved === true || 
+             teamProgress[teamName][challengeId].status === 'solved')) {
             
             const team = teams.find(t => t.name === teamName);
             if (team && team.id && teamSubmissionsCache[team.id]) {
@@ -901,11 +965,19 @@ async function loadTeamDataLazy(teamName) {
         return;
     }
     
-    // Check cache first
-    if (isCacheValid(teamName)) {
+    // Check cache first - mais vérifier aussi que teamProgress existe
+    if (isCacheValid(teamName) && teamProgress[teamName]) {
         debugLog(`📋 Using cached data for team ${teamName}`);
         const cached = getCachedTeamData(teamName);
+        // S'assurer que teamProgress est synchronisé
+        if (!teamProgress[teamName]) {
+            teamProgress[teamName] = cached.data;
+            syncTeamProgress();
+        }
         return cached.data;
+    } else if (!teamProgress[teamName]) {
+        debugLog(`⚠️ teamProgress vide pour ${teamName}, forçage du rechargement`);
+        clearTeamCache(teamName);
     }
     
     // Start loading
@@ -936,10 +1008,26 @@ async function loadTeamDataLazy(teamName) {
             throw new Error(`Team ${teamName} has no ID`);
         }
         
-        debugLog(`🔄 Loading solves for team ${teamName} (ID: ${team.id})`);
+        debugLog(`🔄 Loading solves for team ${teamName} (ID: ${team.id}, Individual: ${team.isIndividual || false})`);
         
         try {
-            const solvesResponse = await callCTFdAPI(`/api/v1/teams/${team.id}/solves`);
+            let solvesResponse;
+            
+            if (team.isIndividual) {
+                // Mode individuel - charger les solves de l'utilisateur
+                const userId = team.id.replace('user_', '');
+                try {
+                    solvesResponse = await callCTFdAPI(`/api/v1/users/${userId}/solves`);
+                } catch (error) {
+                    debugLog('Erreur API users/solves, tentative avec submissions');
+                    // Fallback vers l'endpoint submissions
+                    solvesResponse = await callCTFdAPI(`/api/v1/submissions?user_id=${userId}&type=correct`);
+                }
+            } else {
+                // Mode équipe standard
+                solvesResponse = await callCTFdAPI(`/api/v1/teams/${team.id}/solves`);
+            }
+            
             const solves = solvesResponse.data || [];
             
             debugLog(`📦 Received ${solves.length} solves for team ${teamName}`);
@@ -951,10 +1039,12 @@ async function loadTeamDataLazy(teamName) {
             
             // Réinitialiser et remplir avec les solves
             for (const solve of solves) {
-                const challId = solve.challenge_id;
+                const challId = String(solve.challenge_id);
                 if (challengeMap[challId]) {
                     teamProgress[teamName][challId] = {
-                        status: 'solved',
+                        solved: true,
+                        attempted: true,
+                        locked: false,
                         date: solve.date,
                         points: challengeMap[challId].points
                     };
@@ -965,7 +1055,9 @@ async function loadTeamDataLazy(teamName) {
             for (const challId in challengeMap) {
                 if (!teamProgress[teamName][challId]) {
                     teamProgress[teamName][challId] = {
-                        status: 'unsolved',
+                        solved: false,
+                        attempted: false,
+                        locked: false,
                         date: null,
                         points: 0
                     };
@@ -977,6 +1069,12 @@ async function loadTeamDataLazy(teamName) {
             syncTeamProgress();
             
             debugLog(`✅ Team ${teamName} solves loaded: ${solves.length} challenges solved`);
+            
+            // Mettre à jour l'affichage des équipes
+            if (userPermissions.canViewAllTeams) {
+                generateTeamFilters();
+            }
+            
             return data;
             
         } catch (error) {
@@ -1618,13 +1716,83 @@ async function loadDataBasedOnPermissions() {
 
 async function preloadAllTeams() {
     try {
-        debugLog('🏁 Préchargement de toutes les équipes...');
+        debugLog('🏁 Préchargement de toutes les équipes/joueurs...');
         showLoginLoader('Chargement des équipes...');
         let allTeams = [];
         let page = 1;
         let hasMore = true;
         
-        // Gérer la pagination de l'API CTFd
+        // Détecter le mode du CTF sans accès admin
+        let isIndividualMode = false;
+        
+        // Méthode 1: Vérifier si l'endpoint teams retourne des données
+        try {
+            const teamsTestResponse = await callCTFdAPI('/api/v1/teams?page=1');
+            if (!teamsTestResponse.data || teamsTestResponse.data.length === 0) {
+                debugLog('Aucune équipe trouvée - possible mode individuel');
+                isIndividualMode = true;
+            }
+        } catch (teamsError) {
+            debugLog('Erreur accès équipes:', teamsError);
+            // Si l'endpoint teams n'est pas accessible, c'est probablement un mode individuel
+            if (teamsError.message.includes('404') || teamsError.message.includes('403')) {
+                isIndividualMode = true;
+            }
+        }
+        
+        // Méthode 2: Si on a toujours un doute, vérifier le scoreboard
+        if (!isIndividualMode) {
+            try {
+                const scoreboardResponse = await callCTFdAPI('/api/v1/scoreboard');
+                // Si le scoreboard contient des "users" au lieu de "teams", c'est individuel
+                if (scoreboardResponse.data && scoreboardResponse.data.users) {
+                    isIndividualMode = true;
+                }
+            } catch (scoreError) {
+                debugLog('Impossible de vérifier le scoreboard:', scoreError);
+            }
+        }
+        
+        debugLog(`Mode détecté: ${isIndividualMode ? 'individuel' : 'équipe'}`);
+        
+        if (isIndividualMode) {
+            // Mode individuel - charger les utilisateurs au lieu des équipes
+            showLoginLoader('Chargement des joueurs...');
+            let allUsers = [];
+            page = 1;
+            hasMore = true;
+            
+            while (hasMore) {
+                showLoginLoader(`Chargement des joueurs (page ${page})...`);
+                const usersResponse = await callCTFdAPI(`/api/v1/users?page=${page}`);
+                if (usersResponse.data && usersResponse.data.length > 0) {
+                    allUsers = allUsers.concat(usersResponse.data);
+                    if (usersResponse.data.length < 50) {
+                        hasMore = false;
+                    }
+                    page++;
+                } else {
+                    hasMore = false;
+                }
+            }
+            
+            debugLog(`📊 ${allUsers.length} joueurs trouvés`);
+            
+            // Convertir les utilisateurs en "équipes" virtuelles
+            const userColors = generateDistinctTeamColors(allUsers.length);
+            setTeams(allUsers.map((user, index) => ({
+                id: `user_${user.id}`,
+                name: user.name,
+                score: user.score || 0,
+                place: user.place || (index + 1),
+                color: userColors[index],
+                isIndividual: true
+            })));
+            
+            return;
+        }
+        
+        // Mode équipe standard
         while (hasMore) {
             showLoginLoader(`Chargement des équipes (page ${page})...`);
             const teamsResponse = await callCTFdAPI(`/api/v1/teams?page=${page}`);
@@ -1720,6 +1888,76 @@ async function loadAdminData() {
         document.getElementById('paths-btn').classList.remove('disabled');
         document.getElementById('heatmap-btn').classList.remove('disabled');
         
+        // Régénérer la liste des équipes
+        generateTeamFilters();
+        
+        // Mettre à jour les statistiques globales
+        updateGlobalStats();
+        
+        // Charger automatiquement les données des premières équipes
+        // ou des équipes qui étaient sélectionnées avant déconnexion
+        if (teams.length > 0) {
+            debugLog('🔄 Chargement automatique des données pour les premières équipes...');
+            
+            // Récupérer les équipes précédemment sélectionnées depuis sessionStorage
+            let teamsToLoad = [];
+            try {
+                const savedSelectedTeams = sessionStorage.getItem('selectedTeams');
+                if (savedSelectedTeams) {
+                    const savedTeamNames = JSON.parse(savedSelectedTeams);
+                    // Vérifier que ces équipes existent toujours
+                    teamsToLoad = savedTeamNames.filter(name => 
+                        teams.some(t => t.name === name)
+                    ).slice(0, 5); // Limiter à 5 équipes max
+                }
+            } catch (e) {
+                debugLog('Impossible de récupérer les équipes sauvegardées:', e);
+            }
+            
+            // Si pas d'équipes sauvegardées, charger les 3 premières par défaut
+            if (teamsToLoad.length === 0) {
+                teamsToLoad = teams.slice(0, 3).map(t => t.name);
+            }
+            
+            // Charger les données et sélectionner ces équipes
+            debugLog(`📊 Chargement automatique de ${teamsToLoad.length} équipes:`, teamsToLoad);
+            
+            // D'abord sélectionner toutes les équipes
+            setSelectedTeams(teamsToLoad);
+            
+            // Puis charger leurs données
+            for (const teamName of teamsToLoad) {
+                try {
+                    await loadTeamDataLazy(teamName);
+                    
+                    // Charger aussi les submissions de l'équipe
+                    const team = teams.find(t => t.name === teamName);
+                    if (team && team.id) {
+                        await loadTeamSubmissions(team.id);
+                    }
+                    
+                    // Mettre à jour la checkbox
+                    const checkbox = Array.from(document.querySelectorAll('#team-filters input[type="checkbox"]'))
+                        .find(cb => cb.parentElement.querySelector('.team-name')?.textContent === teamName);
+                    if (checkbox) {
+                        checkbox.checked = true;
+                    }
+                } catch (error) {
+                    debugWarn(`Impossible de charger les données pour ${teamName}:`, error);
+                }
+            }
+            
+            // Régénérer les filtres pour mettre à jour les compteurs
+            generateTeamFilters();
+            
+            // Mettre à jour la visualisation avec les équipes chargées
+            setTimeout(() => {
+                updateVisualization();
+                updateGlobalStats();
+                updateLiveStats();
+            }, 100);
+        }
+        
     } catch (error) {
         console.error('Erreur lors du chargement des données admin:', error);
         showError('Erreur de chargement: ' + error.message + '. Vérifiez que l\'API CTFd est accessible.');
@@ -1745,14 +1983,48 @@ async function loadUserData() {
         }
         
         if (teamId) {
-            const teamResponse = await callCTFdAPI(`/api/v1/teams/${teamId}`);
+            // Mode équipe confirmé - l'utilisateur a une équipe
+            try {
+                const teamResponse = await callCTFdAPI(`/api/v1/teams/${teamId}`);
+                teams = [{
+                    id: teamId,
+                    name: teamResponse.data.name,
+                    color: '#3b82f6'
+                }];
+                setSelectedTeams([teamResponse.data.name]);
+                currentUser.teamName = teamResponse.data.name;
+            } catch (teamError) {
+                debugLog('Erreur accès équipe:', teamError);
+                // Fallback au mode individuel si l'équipe n'est pas accessible
+                teamId = null;
+            }
+        }
+        
+        if (!teamId) {
+            // Mode individuel ou pas d'équipe assignée
+            debugLog('Mode individuel détecté - pas d\'équipe assignée');
+            
+            // Vérifier si c'est vraiment un mode individuel en testant l'endpoint teams
+            let isIndividualMode = true;
+            try {
+                const teamsCheck = await callCTFdAPI('/api/v1/teams?page=1');
+                if (teamsCheck.data && teamsCheck.data.length > 0) {
+                    // Il y a des équipes, donc c'est un CTF en équipe mais l'utilisateur n'en a pas
+                    isIndividualMode = false;
+                    showError('Vous n\'êtes assigné à aucune équipe. Rejoignez ou créez une équipe pour participer.');
+                }
+            } catch (e) {
+                debugLog('Impossible de vérifier les équipes:', e);
+            }
+            
             teams = [{
-                id: teamId,
-                name: teamResponse.data.name,
-                color: '#3b82f6'
+                id: `user_${currentUser.id}`,
+                name: currentUser.name,
+                color: '#3b82f6',
+                isIndividual: true
             }];
-            setSelectedTeams([teamResponse.data.name]);
-            currentUser.teamName = teamResponse.data.name;
+            setSelectedTeams([currentUser.name]);
+            currentUser.teamName = currentUser.name;
         }
         
         // Charger seulement les challenges visibles/accessibles pour les utilisateurs
@@ -1782,11 +2054,32 @@ async function loadUserData() {
         // Créer challengeMap à partir des vraies données CTFd
         await buildChallengeMapFromCTFd(challenges);
         
-        // Charger les soumissions de cette équipe seulement
-        const teamSubmissionsResponse = await callCTFdAPI(`/api/v1/teams/${teamId}/solves`);
+        // Charger les soumissions selon le mode (équipe ou individuel)
+        let submissions = [];
+        if (teamId) {
+            // Mode équipe - charger les solves de l'équipe
+            const teamSubmissionsResponse = await callCTFdAPI(`/api/v1/teams/${teamId}/solves`);
+            submissions = teamSubmissionsResponse.data || [];
+        } else {
+            // Mode individuel - charger les solves de l'utilisateur
+            try {
+                const userSubmissionsResponse = await callCTFdAPI(`/api/v1/users/${currentUser.id}/solves`);
+                submissions = userSubmissionsResponse.data || [];
+            } catch (error) {
+                debugLog('Erreur lors du chargement des solves utilisateur:', error);
+                // Fallback : essayer l'endpoint submissions
+                try {
+                    const submissionsResponse = await callCTFdAPI(`/api/v1/submissions?user_id=${currentUser.id}&type=correct`);
+                    submissions = submissionsResponse.data || [];
+                } catch (fallbackError) {
+                    debugLog('Erreur fallback submissions:', fallbackError);
+                    submissions = [];
+                }
+            }
+        }
         
-        // Générer les données de progression pour cette équipe
-        generateUserProgressFromSubmissions(teamSubmissionsResponse.data);
+        // Générer les données de progression
+        generateUserProgressFromSubmissions(submissions);
         
         // Désactiver les contrôles multi-équipes
         document.getElementById('teams-section').classList.add('admin-only');
@@ -1843,6 +2136,12 @@ function generateMockAdminData() {
     document.getElementById('teams-section').classList.remove('admin-only');
     document.getElementById('paths-btn').classList.remove('disabled');
     document.getElementById('heatmap-btn').classList.remove('disabled');
+    
+    // Régénérer la liste des équipes
+    generateTeamFilters();
+    
+    // Mettre à jour les statistiques globales
+    updateGlobalStats();
 }
 
 function generateMockUserData() {
@@ -1979,9 +2278,21 @@ function generateUserProgressFromSubmissions(userSolves) {
             locked: false,
             timeSpent: timeSpent,
             attempts: attempts,
-            points: solved ? challengeInfo.points : 0
+            points: solved ? challengeInfo.points : 0,
+            date: solved && solve ? solve.date : null
         };
     });
+    
+    // Synchroniser avec la référence globale
+    syncTeamProgress();
+    
+    // Mettre en cache les données
+    setCachedTeamData(teamName, teamProgress[teamName]);
+    
+    // Mettre à jour l'affichage des équipes si c'est pour l'utilisateur courant
+    if (userPermissions.canViewAllTeams) {
+        generateTeamFilters();
+    }
 }
 
 function generateMockProgressData() {
@@ -2022,7 +2333,8 @@ function generateMockProgressData() {
                 locked: false,
                 timeSpent: attempted ? Math.floor(Math.random() * 120) + 10 : 0,
                 attempts: attempted ? Math.floor(Math.random() * 5) + 1 : 0,
-                points: solved ? challengeInfo.points : 0
+                points: solved ? challengeInfo.points : 0,
+                date: solved ? new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString() : null
             };
         });
     });
@@ -2054,7 +2366,8 @@ function generateMockProgressDataForTeam(teamName) {
             locked: false,
             timeSpent: attempted ? Math.floor(Math.random() * 120) + 10 : 0,
             attempts: attempted ? Math.floor(Math.random() * 5) + 1 : 0,
-            points: solved ? challengeInfo.points : 0
+            points: solved ? challengeInfo.points : 0,
+            date: solved ? new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString() : null
         };
     });
 }
@@ -2075,9 +2388,16 @@ async function initializeInterface() {
         d3LibraryLoaded: typeof d3 !== 'undefined'
     });
     
-    if (!d3SystemReady && window.initializeD3Visualization) {
+    // Forcer la réinitialisation D3 après reconnexion
+    if (window.initializeD3Visualization) {
         try {
-            debugLog('🎨 Initializing D3.js system after login...');
+            debugLog('🎨 Re-initializing D3.js system after login...');
+            // Nettoyer l'ancien système D3
+            if (window.clearD3Visualization) {
+                window.clearD3Visualization();
+            }
+            d3SystemReady = false; // Forcer la réinitialisation
+            
             const d3Initialized = await window.initializeD3Visualization();
             if (d3Initialized) {
                 d3SystemReady = true;
@@ -2088,35 +2408,33 @@ async function initializeInterface() {
         }
     }
     
-    generateTeamFilters();
-    
-    // Mettre à jour la visualisation après avoir montré l'interface
-    debugLog('🔄 Mise à jour de la visualisation après connexion');
-    updateVisualization();
-    generateChallengeMap();
-    
-    // Use D3 rendering if available and ready, fallback to legacy system
-    if (d3SystemReady && window.renderD3Challenges && typeof isD3Ready === 'function' && isD3Ready()) {
-        try {
-            debugLog('🔄 Rendering challenges with D3.js...');
-            await renderD3Challenges();
-            debugLog('✅ Using D3.js rendering system');
-        } catch (error) {
-            console.error('❌ D3 rendering failed in initializeInterface:', error);
-            debugLog('🔄 Falling back to legacy rendering system');
-            renderChallenges();
-            drawDependencies();
-            updateTransform(); // Ensure SVG follows challenge container
-        }
-    } else {
-        debugLog('⚠️ Using legacy rendering system');
-        renderChallenges();
-        drawDependencies();
-        updateTransform(); // Ensure SVG follows challenge container
+    // S'assurer que selectedTeams est vide après reconnexion
+    if (selectedTeams.length > 0) {
+        debugLog('⚠️ Réinitialisation des équipes sélectionnées après reconnexion');
+        setSelectedTeams([]);
     }
     
+    generateTeamFilters();
     updateGlobalStats();
-    updateLiveStats();
+    
+    // Mettre à jour la visualisation après avoir réinitialisé D3
+    debugLog('🔄 Mise à jour de la visualisation après connexion');
+    
+    // S'assurer que challengeMap existe avant de continuer
+    if (Object.keys(challengeMap).length === 0) {
+        debugLog('⚠️ challengeMap vide, régénération...');
+        generateChallengeMap();
+    }
+    
+    // Utiliser un petit délai pour s'assurer que D3 est complètement initialisé
+    setTimeout(async () => {
+        updateVisualization();
+        
+        // Si pas d'équipes sélectionnées mais des données existent, forcer un rafraîchissement
+        if (teams.length > 0 && selectedTeams.length === 0 && userPermissions.isAdmin) {
+            debugLog('🔄 Aucune équipe sélectionnée, affichage de la vue d\'ensemble');
+        }
+    }, 100);
 }
 
 function generateTeamFilters(searchTerm = '') {
@@ -2482,8 +2800,8 @@ function generateChallengeMap() {
         }
         
         node.innerHTML = `
-            <div class="challenge-name">${challengeInfo.name}</div>
-            <div class="challenge-category">${challengeInfo.category || 'General'}</div>
+            <div class="challenge-name">${truncateText(challengeInfo.name, 18)}</div>
+            <div class="challenge-category">${truncateText(challengeInfo.category || 'General', 16)}</div>
             <div class="challenge-points">${challengeInfo.points} pts</div>
             <div class="challenge-status">${statusIcon}</div>
             ${teamIndicators}
@@ -2719,7 +3037,7 @@ function getChallengeOverallState(challengeId) {
 
 function getTeamSolvedCount(teamName) {
     if (!teamProgress[teamName]) return 0;
-    return Object.values(teamProgress[teamName]).filter(p => p.status === 'solved').length;
+    return Object.values(teamProgress[teamName]).filter(p => p.solved === true).length;
 }
 
 function showTooltip(event, challengeId) {
@@ -2881,9 +3199,19 @@ function calculateTeamScore(teamName) {
 function updateAPIStatus(status, message) {
     const indicator = document.getElementById('api-indicator');
     const text = document.getElementById('api-status-text');
+    const urlDisplay = document.getElementById('ctfd-url-display');
     
     indicator.className = `status-indicator status-${status}`;
     text.textContent = message;
+    
+    // Afficher l'URL du CTFd si connecté
+    if ((status === 'connected' || status === 'proxy') && currentUser.ctfdUrl && urlDisplay) {
+        urlDisplay.textContent = `📍 ${currentUser.ctfdUrl}`;
+        urlDisplay.style.display = 'block';
+    } else if (urlDisplay) {
+        urlDisplay.textContent = '';
+        urlDisplay.style.display = 'none';
+    }
     
     if (status === 'connected') {
         hideError();
@@ -3060,6 +3388,11 @@ function logout() {
         if (teamsList) {
             teamsList.innerHTML = '';
         }
+        
+        // Réinitialiser les variables de filtre et tri
+        window.teamSortMode = 'score';
+        window.showOnlySelected = false;
+        window.teamSearchTerm = '';
         
         // Réinitialiser les boutons/sections admin
         const adminSections = document.querySelectorAll('.admin-only');

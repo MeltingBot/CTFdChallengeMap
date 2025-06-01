@@ -448,7 +448,7 @@ function renderD3Nodes() {
         .attr('class', 'd3-challenge-text d3-challenge-category')
         .attr('text-anchor', 'middle')
         .attr('y', 5)
-        .text(d => d.category);
+        .text(d => truncateText(d.category || 'General', 16));
     
     // Add challenge points
     nodeEnter.append('text')
@@ -804,7 +804,7 @@ function getChallengeStatus(challengeId, teamProgress) {
         const teamName = currentUser.teamName;
         if (teamProgress[teamName] && teamProgress[teamName][challengeId]) {
             const progress = teamProgress[teamName][challengeId];
-            return progress.status === 'solved' ? 'solved' : 'attempted';
+            return (progress.solved === true || progress.status === 'solved') ? 'solved' : 'attempted';
         }
         return 'available';
     } else {
@@ -814,10 +814,11 @@ function getChallengeStatus(challengeId, teamProgress) {
         let teamsWithAccess = 0;
         
         for (const teamName of selectedTeams) {
-            if (teamProgress[teamName] && teamProgress[teamName][challengeId] && 
-                teamProgress[teamName][challengeId].status === 'solved') {
-                teamsWithAccess++;
-                solvedCount++;
+            if (teamProgress[teamName] && teamProgress[teamName][challengeId]) {
+                const progress = teamProgress[teamName][challengeId];
+                if (progress.solved === true || progress.status === 'solved') {
+                    teamsWithAccess++;
+                    solvedCount++;
                 
                 // Vérifier les vraies données de submissions
                 const team = teams.find(t => t.name === teamName);
@@ -825,6 +826,7 @@ function getChallengeStatus(challengeId, teamProgress) {
                     const failsForChallenge = window.teamSubmissionsCache[team.id][challengeId] || 0;
                     if (failsForChallenge > 0) {
                         hasAttempts = true;
+                    }
                     }
                 }
             }
@@ -860,7 +862,7 @@ function getChallengeTeamIndicators(challengeId) {
         
         if (teamProgress[teamName] && teamProgress[teamName][challengeId]) {
             const progress = teamProgress[teamName][challengeId];
-            solved = progress.status === 'solved';
+            solved = progress.solved === true || progress.status === 'solved';
         }
         
         return {
@@ -1135,7 +1137,7 @@ function updateTeamPaths() {
         const solvedChallenges = [];
         if (window.teamProgress[teamName]) {
             Object.entries(window.teamProgress[teamName]).forEach(([challengeId, progress]) => {
-                if (progress.status === 'solved' && progress.date) {
+                if ((progress.solved === true || progress.status === 'solved') && progress.date) {
                     const node = d3Data.nodes.find(n => n.id === challengeId);
                     if (node) {
                         solvedChallenges.push({
