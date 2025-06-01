@@ -2089,6 +2089,10 @@ async function initializeInterface() {
     }
     
     generateTeamFilters();
+    
+    // Mettre à jour la visualisation après avoir montré l'interface
+    debugLog('🔄 Mise à jour de la visualisation après connexion');
+    updateVisualization();
     generateChallengeMap();
     
     // Use D3 rendering if available and ready, fallback to legacy system
@@ -4131,12 +4135,71 @@ function runStartupVerification() {
     }
 }
 
+// Fonction pour charger la config proxy
+async function loadProxyConfig() {
+    try {
+        debugLog('🔧 Chargement de la configuration proxy...');
+        
+        // Indiquer le chargement dans l'interface
+        const urlInput = document.getElementById('ctfd-url');
+        if (urlInput) {
+            urlInput.placeholder = 'Chargement de la configuration...';
+            urlInput.disabled = true;
+        }
+        
+        // Vérifier que le proxy est actif
+        const healthResponse = await fetch('/health');
+        const healthData = await healthResponse.json();
+        debugLog('Proxy status:', healthData);
+        
+        // Récupérer la configuration
+        const configResponse = await fetch('/config');
+        const config = await configResponse.json();
+        
+        // Mettre à jour le champ URL
+        if (urlInput && config.ctfdUrl) {
+            urlInput.value = config.ctfdUrl;
+            urlInput.placeholder = 'https://demo.ctfd.io';
+            debugLog('URL pré-remplie avec CTFD_URL:', config.ctfdUrl);
+        }
+        
+        // Afficher un indicateur que le proxy est actif
+        updateAPIStatus('proxy', `Proxy actif: ${config.ctfdUrl}`);
+        
+    } catch (error) {
+        debugLog('Proxy non accessible:', error);
+        
+        // Restaurer le champ URL
+        const urlInput = document.getElementById('ctfd-url');
+        if (urlInput) {
+            urlInput.value = 'https://demo.ctfd.io';
+            urlInput.placeholder = 'https://demo.ctfd.io';
+            urlInput.disabled = false;
+        }
+        
+        // Afficher un avertissement que le proxy n'est pas actif
+        updateAPIStatus('proxy-down', 'Proxy non démarré - utilisez npm start');
+        showError('Le proxy local n\'est pas démarré. Lancez "npm start" ou utilisez le mode direct avec une extension CORS.');
+    } finally {
+        // Réactiver le champ URL
+        const urlInput = document.getElementById('ctfd-url');
+        if (urlInput) {
+            urlInput.disabled = false;
+        }
+    }
+}
+
 // Initialisation with enhanced error handling
 document.addEventListener('DOMContentLoaded', async () => {
     debugLog('🚀 Starting application initialization...');
     
     // Wait for all essential DOM elements to be ready
     await waitForEssentialElements();
+    
+    // Charger immédiatement la config proxy si en mode local (avant autres initialisations)
+    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
+        await loadProxyConfig();
+    }
     
     // D3.js will be initialized after login when container is visible
     
@@ -4149,35 +4212,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize drag & drop system
     initializeDragAndDrop();
     
-    // Vérifier le proxy et récupérer l'URL CTFd si en mode local
-    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
-        try {
-            // Vérifier que le proxy est actif
-            const healthResponse = await fetch('/health');
-            const healthData = await healthResponse.json();
-            debugLog('Proxy status:', healthData);
-            
-            // Récupérer la configuration
-            const configResponse = await fetch('/config');
-            const config = await configResponse.json();
-            
-            const urlInput = document.getElementById('ctfd-url');
-            // Pré-remplir uniquement si le champ contient la valeur par défaut
-            if (urlInput && config.ctfdUrl && urlInput.value === 'https://demo.ctfd.io') {
-                urlInput.value = config.ctfdUrl;
-                debugLog('URL pré-remplie avec CTFD_URL:', config.ctfdUrl);
-            } else if (urlInput && urlInput.value !== 'https://demo.ctfd.io') {
-                debugLog('URL utilisateur conservée:', urlInput.value);
-            }
-            
-            // Afficher un indicateur que le proxy est actif
-            updateAPIStatus('proxy', `Proxy actif: ${config.ctfdUrl}`);
-            
-        } catch (error) {
-            debugLog('Proxy non accessible:', error);
-            // Afficher un avertissement que le proxy n'est pas actif
-            updateAPIStatus('proxy-down', 'Proxy non démarré - utilisez npm start');
-            showError('Le proxy local n\'est pas démarré. Lancez "npm start" ou utilisez le mode direct avec une extension CORS.');
-        }
-    }
 }); // End of initialization
