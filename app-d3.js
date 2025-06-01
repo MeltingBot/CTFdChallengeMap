@@ -1074,6 +1074,50 @@ function getRectangleEdgePoint(cx, cy, width, height, angle) {
 }
 
 /**
+ * Animation state for progressive path drawing
+ */
+let pathAnimationState = {
+    isPlaying: false,
+    speed: 1000, // ms between steps
+    currentStep: 0,
+    totalSteps: 0,
+    animationId: null,
+    teamSolveSequences: {} // Store solve sequences for each team
+};
+
+/**
+ * Calculate solve sequences for all selected teams
+ */
+function calculateTeamSolveSequences() {
+    const sequences = {};
+    
+    window.selectedTeams.forEach(teamName => {
+        const solvedChallenges = [];
+        if (window.teamProgress[teamName]) {
+            Object.entries(window.teamProgress[teamName]).forEach(([challengeId, progress]) => {
+                if ((progress.solved === true || progress.status === 'solved') && progress.date) {
+                    const node = d3Data.nodes.find(n => n.id === challengeId);
+                    if (node) {
+                        solvedChallenges.push({
+                            id: challengeId,
+                            date: new Date(progress.date),
+                            node: node,
+                            teamName: teamName
+                        });
+                    }
+                }
+            });
+        }
+        
+        // Sort by solve date
+        solvedChallenges.sort((a, b) => a.date - b.date);
+        sequences[teamName] = solvedChallenges;
+    });
+    
+    return sequences;
+}
+
+/**
  * Update team paths based on parcours mode
  */
 function updateTeamPaths() {
@@ -1088,8 +1132,9 @@ function updateTeamPaths() {
         return;
     }
     
-    // Clear existing paths
+    // Clear existing paths and stop any running animation
     d3Data.pathGroup.selectAll('*').remove();
+    stopPathAnimation();
     
     if (!window.parcoursMode || !window.selectedTeams || window.selectedTeams.length === 0) {
         console.log('❌ Conditions not met for drawing paths');
@@ -1098,7 +1143,56 @@ function updateTeamPaths() {
     
     console.log('🛤️ Drawing team paths for:', window.selectedTeams);
     
-    // Create arrowhead markers for each team
+    // Calculate solve sequences for animation
+    pathAnimationState.teamSolveSequences = calculateTeamSolveSequences();
+    
+    // Use static mode by default
+    updateTeamPathsStatic();
+}
+
+/**
+ * Start progressive path animation
+ */
+function startPathAnimation() {
+    if (pathAnimationState.isPlaying) {
+        stopPathAnimation();
+    }
+    
+    console.log('🎬 Starting path animation');
+    
+    // Reset animation state
+    pathAnimationState.currentStep = 0;
+    pathAnimationState.isPlaying = true;
+    
+    // Clear existing paths
+    d3Data.pathGroup.selectAll('*').remove();
+    
+    // Setup markers for all teams
+    setupTeamMarkers();
+    
+    // Start the animation loop
+    updateAnimateButton('⏹️ Arrêter');
+    animateNextStep();
+}
+
+/**
+ * Stop path animation
+ */
+function stopPathAnimation() {
+    if (pathAnimationState.animationId) {
+        clearTimeout(pathAnimationState.animationId);
+        pathAnimationState.animationId = null;
+    }
+    pathAnimationState.isPlaying = false;
+    pathAnimationState.currentStep = 0;
+    updateAnimateButton('🎬 Animer');
+    console.log('⏹️ Path animation stopped');
+}
+
+/**
+ * Setup markers for all teams
+ */
+function setupTeamMarkers() {
     let defs = d3Data.svg.select('defs');
     if (defs.empty()) {
         defs = d3Data.svg.append('defs');
@@ -1108,13 +1202,7 @@ function updateTeamPaths() {
         const team = window.teams.find(t => t.name === teamName);
         if (!team) return;
         
-        // Use team color if available, otherwise generate distinct color
-        const teamColor = team.color || (() => {
-            const colors = window.generateDistinctTeamColors ? 
-                window.generateDistinctTeamColors(window.selectedTeams.length) : 
-                [`hsl(${teamIndex * 360 / window.selectedTeams.length}, 70%, 50%)`];
-            return colors[teamIndex] || '#6b7280';
-        })();
+        const teamColor = team.color || `hsl(${teamIndex * 360 / window.selectedTeams.length}, 70%, 50%)`;
         
         // Create arrowhead marker for this team
         const markerId = `arrow-${teamName.replace(/\s+/g, '-')}`;
@@ -1132,6 +1220,194 @@ function updateTeamPaths() {
             .attr('d', 'M 0 0 L 10 5 L 0 10 z')
             .attr('fill', teamColor)
             .attr('opacity', 0.8);
+    });
+}
+
+/**
+ * Animate next step in the progression
+ */
+function animateNextStep() {
+    if (!pathAnimationState.isPlaying) return;
+    
+    // Collect all solve events across all teams, sorted by date
+    const allSolveEvents = [];
+    Object.entries(pathAnimationState.teamSolveSequences).forEach(([teamName, solves]) => {
+        solves.forEach((solve, index) => {
+            if (index > 0) { // Skip first solve (no path to draw)
+                allSolveEvents.push({
+                    teamName,
+                    fromSolve: solves[index - 1],
+                    toSolve: solve,
+                    date: solve.date
+                });
+            }
+        });
+    });
+    
+    // Sort all events by date
+    allSolveEvents.sort((a, b) => a.date - b.date);
+    
+    if (pathAnimationState.currentStep >= allSolveEvents.length) {
+        // Animation complete
+        pathAnimationState.isPlaying = false;
+        console.log('✅ Path animation completed');
+        return;
+    }
+    
+    // Get current event
+    const currentEvent = allSolveEvents[pathAnimationState.currentStep];
+    const team = window.teams.find(t => t.name === currentEvent.teamName);
+    const teamIndex = window.selectedTeams.indexOf(currentEvent.teamName);
+    const teamColor = team ? team.color : `hsl(${teamIndex * 360 / window.selectedTeams.length}, 70%, 50%)`;
+    
+    console.log(`🎬 Step ${pathAnimationState.currentStep + 1}/${allSolveEvents.length}: ${currentEvent.teamName} → ${currentEvent.toSolve.node.name}`);
+    
+    // Draw this path segment
+    drawAnimatedPath(currentEvent, teamColor, teamIndex);
+    
+    // Schedule next step
+    pathAnimationState.currentStep++;
+    pathAnimationState.animationId = setTimeout(() => {
+        animateNextStep();
+    }, pathAnimationState.speed);
+}
+
+/**
+ * Draw a single animated path segment
+ */
+function drawAnimatedPath(event, teamColor, teamIndex) {
+    const offset = (teamIndex - (window.selectedTeams.length - 1) / 2) * 20;
+    const markerId = `arrow-${event.teamName.replace(/\s+/g, '-')}`;
+    
+    // Calculate path
+    const edges = getEdgePoint(event.fromSolve.node, event.toSolve.node, D3_CONFIG.nodeWidth, D3_CONFIG.nodeHeight);
+    const sx = edges.source.x;
+    const sy = edges.source.y;
+    const tx = edges.target.x;
+    const ty = edges.target.y;
+    
+    // Calculate control point for quadratic bezier curve
+    const dx = tx - sx;
+    const dy = ty - sy;
+    const dr = Math.sqrt(dx * dx + dy * dy);
+    
+    // Offset perpendicular to the line
+    const offsetX = -dy / dr * offset;
+    const offsetY = dx / dr * offset;
+    
+    const mx = (sx + tx) / 2 + offsetX;
+    const my = (sy + ty) / 2 + offsetY;
+    
+    const pathString = `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`;
+    
+    // Create glow effect first
+    const glowPath = d3Data.pathGroup.append('path')
+        .attr('class', `team-path-glow team-path-glow-${teamIndex}`)
+        .attr('stroke', teamColor)
+        .attr('stroke-width', 8)
+        .attr('fill', 'none')
+        .attr('opacity', 0.3)
+        .attr('filter', 'blur(4px)')
+        .attr('d', pathString);
+    
+    // Create main path
+    const mainPath = d3Data.pathGroup.append('path')
+        .attr('class', `team-path team-path-${teamIndex}`)
+        .attr('stroke', teamColor)
+        .attr('stroke-width', 4)
+        .attr('fill', 'none')
+        .attr('opacity', 0.9)
+        .attr('stroke-linecap', 'round')
+        .attr('marker-end', `url(#${markerId})`)
+        .attr('d', pathString);
+    
+    // Animate the path drawing
+    const totalLength = mainPath.node().getTotalLength();
+    
+    // Set up the starting positions
+    mainPath
+        .attr('stroke-dasharray', totalLength + ' ' + totalLength)
+        .attr('stroke-dashoffset', totalLength);
+    
+    glowPath
+        .attr('stroke-dasharray', totalLength + ' ' + totalLength)
+        .attr('stroke-dashoffset', totalLength);
+    
+    // Animate both paths
+    mainPath.transition()
+        .duration(pathAnimationState.speed * 0.7)
+        .ease(d3.easeLinear)
+        .attr('stroke-dashoffset', 0);
+    
+    glowPath.transition()
+        .duration(pathAnimationState.speed * 0.7)
+        .ease(d3.easeLinear)
+        .attr('stroke-dashoffset', 0);
+    
+    // Add pulsing effect to destination node
+    const destNode = d3Data.nodeGroup.selectAll('.d3-challenge-node')
+        .filter(d => d.id === event.toSolve.id);
+    
+    destNode.transition()
+        .duration(200)
+        .style('filter', 'drop-shadow(0 0 10px ' + teamColor + ')')
+        .transition()
+        .duration(200)
+        .style('filter', 'drop-shadow(0 4px 8px rgba(0,0,0,0.15))');
+}
+
+/**
+ * Toggle between static and animated path modes
+ */
+function togglePathAnimation() {
+    if (pathAnimationState.isPlaying) {
+        stopPathAnimation();
+        // Show all paths at once (static mode)
+        updateTeamPathsStatic();
+        updateAnimateButton('🎬 Animer');
+    } else {
+        startPathAnimation();
+        updateAnimateButton('⏹️ Arrêter');
+    }
+}
+
+/**
+ * Update the animation button text
+ */
+function updateAnimateButton(text) {
+    const btn = document.getElementById('animate-btn');
+    if (btn) {
+        btn.textContent = text;
+        btn.classList.toggle('active', pathAnimationState.isPlaying);
+    }
+}
+
+/**
+ * Set animation speed
+ */
+function setAnimationSpeed(speed) {
+    pathAnimationState.speed = speed;
+    console.log(`🎬 Animation speed set to ${speed}ms`);
+}
+
+/**
+ * Update team paths in static mode (show all at once)
+ */
+function updateTeamPathsStatic() {
+    // This is the original updateTeamPaths function logic
+    // Clear existing paths
+    d3Data.pathGroup.selectAll('*').remove();
+    
+    // Setup markers
+    setupTeamMarkers();
+    
+    // Draw all paths at once (original logic from the existing function)
+    window.selectedTeams.forEach((teamName, teamIndex) => {
+        const team = window.teams.find(t => t.name === teamName);
+        if (!team) return;
+        
+        const teamColor = team.color || `hsl(${teamIndex * 360 / window.selectedTeams.length}, 70%, 50%)`;
+        const markerId = `arrow-${teamName.replace(/\s+/g, '-')}`;
         
         // Get solved challenges for this team, sorted by date
         const solvedChallenges = [];
@@ -1153,10 +1429,7 @@ function updateTeamPaths() {
         // Sort by solve date
         solvedChallenges.sort((a, b) => a.date - b.date);
         
-        console.log(`📊 Team ${teamName} has ${solvedChallenges.length} solved challenges`);
-        
         if (solvedChallenges.length < 2) {
-            console.log(`⚠️ Team ${teamName} has less than 2 solved challenges, skipping`);
             return;
         }
         
@@ -1176,76 +1449,49 @@ function updateTeamPaths() {
         // Adjust paths to avoid node overlaps
         const offset = (teamIndex - (window.selectedTeams.length - 1) / 2) * 20;
         
-        // Draw glow effect first (for better visibility)
-        const glowPaths = d3Data.pathGroup.selectAll(`.team-path-glow-${teamIndex}`)
-            .data(pathData);
+        // Draw all paths for this team
+        pathData.forEach(d => {
+            const edges = getEdgePoint(d.source, d.target, D3_CONFIG.nodeWidth, D3_CONFIG.nodeHeight);
+            const sx = edges.source.x;
+            const sy = edges.source.y;
+            const tx = edges.target.x;
+            const ty = edges.target.y;
             
-        // Remove old paths
-        glowPaths.exit().remove();
-        
-        // Update existing and create new paths
-        glowPaths.enter()
-            .append('path')
-            .attr('class', `team-path-glow team-path-glow-${teamIndex}`)
-            .merge(glowPaths)
-            .attr('stroke', teamColor)
-            .attr('d', d => {
-                const edges = getEdgePoint(d.source, d.target, D3_CONFIG.nodeWidth, D3_CONFIG.nodeHeight);
-                const sx = edges.source.x;
-                const sy = edges.source.y;
-                const tx = edges.target.x;
-                const ty = edges.target.y;
-                
-                // Calculate control point for quadratic bezier curve
-                const dx = tx - sx;
-                const dy = ty - sy;
-                const dr = Math.sqrt(dx * dx + dy * dy);
-                
-                // Offset perpendicular to the line
-                const offsetX = -dy / dr * offset;
-                const offsetY = dx / dr * offset;
-                
-                const mx = (sx + tx) / 2 + offsetX;
-                const my = (sy + ty) / 2 + offsetY;
-                
-                return `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`;
-            });
-        
-        // Draw main paths
-        const mainPaths = d3Data.pathGroup.selectAll(`.team-path-${teamIndex}`)
-            .data(pathData);
+            // Calculate control point for quadratic bezier curve
+            const dx = tx - sx;
+            const dy = ty - sy;
+            const dr = Math.sqrt(dx * dx + dy * dy);
             
-        // Remove old paths
-        mainPaths.exit().remove();
-        
-        // Update existing and create new paths
-        mainPaths.enter()
-            .append('path')
-            .attr('class', `team-path team-path-${teamIndex}`)
-            .merge(mainPaths)
-            .attr('stroke', teamColor)
-            .attr('marker-end', `url(#${markerId})`)
-            .attr('d', d => {
-                const edges = getEdgePoint(d.source, d.target, D3_CONFIG.nodeWidth, D3_CONFIG.nodeHeight);
-                const sx = edges.source.x;
-                const sy = edges.source.y;
-                const tx = edges.target.x;
-                const ty = edges.target.y;
-                
-                // Calculate control point for quadratic bezier curve
-                const dx = tx - sx;
-                const dy = ty - sy;
-                const dr = Math.sqrt(dx * dx + dy * dy);
-                
-                // Offset perpendicular to the line
-                const offsetX = -dy / dr * offset;
-                const offsetY = dx / dr * offset;
-                
-                const mx = (sx + tx) / 2 + offsetX;
-                const my = (sy + ty) / 2 + offsetY;
-                
-                return `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`;
-            });
+            // Offset perpendicular to the line
+            const offsetX = -dy / dr * offset;
+            const offsetY = dx / dr * offset;
+            
+            const mx = (sx + tx) / 2 + offsetX;
+            const my = (sy + ty) / 2 + offsetY;
+            
+            const pathString = `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`;
+            
+            // Draw glow path
+            d3Data.pathGroup.append('path')
+                .attr('class', `team-path-glow team-path-glow-${teamIndex}`)
+                .attr('stroke', teamColor)
+                .attr('stroke-width', 8)
+                .attr('fill', 'none')
+                .attr('opacity', 0.3)
+                .attr('filter', 'blur(4px)')
+                .attr('d', pathString);
+            
+            // Draw main path
+            d3Data.pathGroup.append('path')
+                .attr('class', `team-path team-path-${teamIndex}`)
+                .attr('stroke', teamColor)
+                .attr('stroke-width', 4)
+                .attr('fill', 'none')
+                .attr('opacity', 0.9)
+                .attr('stroke-linecap', 'round')
+                .attr('marker-end', `url(#${markerId})`)
+                .attr('d', pathString);
+        });
     });
 }
 
@@ -1258,6 +1504,9 @@ window.resetViewD3 = safeD3Operation(resetViewD3, 'reset view');
 window.fitToScreenD3 = safeD3Operation(fitToScreenD3, 'fit to screen');
 window.isD3Ready = safeD3Operation(isD3Ready, 'readiness check');
 window.updateTeamPaths = safeD3Operation(updateTeamPaths, 'update team paths');
+window.togglePathAnimation = safeD3Operation(togglePathAnimation, 'toggle path animation');
+window.startPathAnimation = safeD3Operation(startPathAnimation, 'start path animation');
+window.stopPathAnimation = safeD3Operation(stopPathAnimation, 'stop path animation');
 
 // Export d3Data for debugging
 window.d3Data = d3Data;

@@ -2606,6 +2606,10 @@ function setViewMode(mode) {
         heatmapMode = false;
         window.heatmapMode = false;
         debugLog('🛤️ Mode Parcours activé');
+        
+        // Show animation button
+        document.getElementById('animate-btn').style.display = 'inline-block';
+        
         if (d3SystemReady && window.updateTeamPaths) {
             window.updateTeamPaths();
         }
@@ -2617,6 +2621,10 @@ function setViewMode(mode) {
         parcoursMode = false;
         window.parcoursMode = false;
         debugLog('🔥 Mode Heatmap activé');
+        
+        // Hide animation button
+        document.getElementById('animate-btn').style.display = 'none';
+        
         // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
             window.d3Data.pathGroup.selectAll('*').remove();
@@ -2629,6 +2637,10 @@ function setViewMode(mode) {
         heatmapMode = false;
         window.heatmapMode = false;
         debugLog('🗂️ Mode Overview activé');
+        
+        // Hide animation button
+        document.getElementById('animate-btn').style.display = 'none';
+        
         // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
             window.d3Data.pathGroup.selectAll('*').remove();
