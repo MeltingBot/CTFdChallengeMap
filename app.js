@@ -111,7 +111,14 @@ document.addEventListener('DOMContentLoaded', function() {
 function calculateChallengeHeatmap() {
     const heatmapData = {};
     
+    debugLog('🔥 calculateChallengeHeatmap called:', {
+        selectedTeams,
+        selectedTeamsLength: selectedTeams ? selectedTeams.length : 0,
+        teamProgressKeys: Object.keys(teamProgress)
+    });
+    
     if (!selectedTeams || selectedTeams.length === 0) {
+        debugLog('⚠️ Pas d\'équipes sélectionnées pour la heatmap');
         return heatmapData;
     }
     
@@ -123,16 +130,23 @@ function calculateChallengeHeatmap() {
         selectedTeams.forEach(teamName => {
             const teamData = teamProgress[teamName];
             if (teamData && teamData[challengeId] && 
-                teamData[challengeId].status === 'solved' && 
+                (teamData[challengeId].solved === true || teamData[challengeId].status === 'solved') && 
                 teamData[challengeId].date) {
                 
                 const solveDate = new Date(teamData[challengeId].date);
+                if (isNaN(solveDate.getTime())) {
+                    debugLog(`⚠️ Date invalide pour heatmap: ${teamName} - ${challengeId}`);
+                    return; // Ignorer cette entrée
+                }
                 
                 // Find previous challenge solve to calculate time difference
                 const previousSolve = findPreviousSolveForTeam(teamName, challengeId, solveDate);
                 if (previousSolve) {
-                    const timeDiff = solveDate - new Date(previousSolve.date);
-                    solveTimes.push(timeDiff);
+                    const prevDate = new Date(previousSolve.date);
+                    if (!isNaN(prevDate.getTime())) {
+                        const timeDiff = solveDate - prevDate;
+                        solveTimes.push(timeDiff);
+                    }
                 } else {
                     // For first challenge, use time from CTF start (approximation)
                     // We can use a baseline or skip if no reference point
@@ -207,7 +221,15 @@ function getChallengeHeatmapColors() {
     const heatmapData = calculateChallengeHeatmap();
     const times = Object.values(heatmapData).map(d => d.averageTime);
     
+    debugLog('🔥 Heatmap calculation:', {
+        selectedTeams,
+        heatmapDataKeys: Object.keys(heatmapData),
+        timesCount: times.length,
+        sampleData: Object.entries(heatmapData).slice(0, 3)
+    });
+    
     if (times.length === 0) {
+        debugLog('⚠️ Aucune donnée de temps pour la heatmap');
         return {};
     }
     
@@ -963,6 +985,19 @@ async function loadTeamDataLazy(teamName) {
     if (loadingTeams.has(teamName)) {
         debugLog(`Team ${teamName} is already being loaded...`);
         return;
+    }
+    
+    // Détecter le mode démo et générer des données de démo
+    if (currentUser.ctfdUrl === 'demo') {
+        debugLog(`🎭 Génération de données de démo pour ${teamName}`);
+        generateMockProgressDataForTeam(teamName);
+        
+        // Mettre à jour l'affichage des équipes
+        if (userPermissions.canViewAllTeams) {
+            generateTeamFilters();
+        }
+        
+        return teamProgress[teamName];
     }
     
     // Check cache first - mais vérifier aussi que teamProgress existe
@@ -1894,69 +1929,7 @@ async function loadAdminData() {
         // Mettre à jour les statistiques globales
         updateGlobalStats();
         
-        // Charger automatiquement les données des premières équipes
-        // ou des équipes qui étaient sélectionnées avant déconnexion
-        if (teams.length > 0) {
-            debugLog('🔄 Chargement automatique des données pour les premières équipes...');
-            
-            // Récupérer les équipes précédemment sélectionnées depuis sessionStorage
-            let teamsToLoad = [];
-            try {
-                const savedSelectedTeams = sessionStorage.getItem('selectedTeams');
-                if (savedSelectedTeams) {
-                    const savedTeamNames = JSON.parse(savedSelectedTeams);
-                    // Vérifier que ces équipes existent toujours
-                    teamsToLoad = savedTeamNames.filter(name => 
-                        teams.some(t => t.name === name)
-                    ).slice(0, 5); // Limiter à 5 équipes max
-                }
-            } catch (e) {
-                debugLog('Impossible de récupérer les équipes sauvegardées:', e);
-            }
-            
-            // Si pas d'équipes sauvegardées, charger les 3 premières par défaut
-            if (teamsToLoad.length === 0) {
-                teamsToLoad = teams.slice(0, 3).map(t => t.name);
-            }
-            
-            // Charger les données et sélectionner ces équipes
-            debugLog(`📊 Chargement automatique de ${teamsToLoad.length} équipes:`, teamsToLoad);
-            
-            // D'abord sélectionner toutes les équipes
-            setSelectedTeams(teamsToLoad);
-            
-            // Puis charger leurs données
-            for (const teamName of teamsToLoad) {
-                try {
-                    await loadTeamDataLazy(teamName);
-                    
-                    // Charger aussi les submissions de l'équipe
-                    const team = teams.find(t => t.name === teamName);
-                    if (team && team.id) {
-                        await loadTeamSubmissions(team.id);
-                    }
-                    
-                    // Mettre à jour la checkbox
-                    const checkbox = Array.from(document.querySelectorAll('#team-filters input[type="checkbox"]'))
-                        .find(cb => cb.parentElement.querySelector('.team-name')?.textContent === teamName);
-                    if (checkbox) {
-                        checkbox.checked = true;
-                    }
-                } catch (error) {
-                    debugWarn(`Impossible de charger les données pour ${teamName}:`, error);
-                }
-            }
-            
-            // Régénérer les filtres pour mettre à jour les compteurs
-            generateTeamFilters();
-            
-            // Mettre à jour la visualisation avec les équipes chargées
-            setTimeout(() => {
-                updateVisualization();
-                updateGlobalStats();
-                updateLiveStats();
-            }, 100);
-        }
+        // Ne plus charger automatiquement les données - elles seront chargées lors de la sélection manuelle
         
     } catch (error) {
         console.error('Erreur lors du chargement des données admin:', error);
@@ -2130,7 +2103,7 @@ function generateMockAdminData() {
     }));
     
     setSelectedTeams([]); // Start with no teams selected for lazy loading
-    generateMockProgressData();
+    // Ne plus générer de données automatiquement - elles seront générées lors de la sélection
     
     // Activer tous les contrôles pour les admins
     document.getElementById('teams-section').classList.remove('admin-only');
