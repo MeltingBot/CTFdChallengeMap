@@ -814,6 +814,93 @@
             animation: dash 1s linear infinite;
         }
 
+        /* Animation Timeline Styles */
+        .animation-timeline {
+            position: absolute;
+            top: 70px;
+            left: 16px;
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 16px;
+            min-width: 300px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            backdrop-filter: blur(5px);
+            z-index: 200;
+        }
+
+        .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .timeline-title {
+            font-weight: 600;
+            font-size: 13px;
+            color: #374151;
+        }
+
+        .timeline-current-time {
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            font-weight: bold;
+            color: #3b82f6;
+            background: #f0f7ff;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .timeline-info {
+            margin-bottom: 12px;
+            font-size: 11px;
+        }
+
+        .timeline-team {
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 2px;
+        }
+
+        .timeline-challenge {
+            color: #6b7280;
+            margin-bottom: 2px;
+        }
+
+        .timeline-duration {
+            color: #10b981;
+            font-weight: 500;
+        }
+
+        .timeline-progress {
+            margin-top: 12px;
+        }
+
+        .timeline-bar {
+            width: 100%;
+            height: 8px;
+            background: #f3f4f6;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+
+        .timeline-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #06b6d4);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .timeline-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: #6b7280;
+        }
+
         /* Arrowhead for path direction */
         .path-arrow {
             fill: currentColor;
@@ -1090,6 +1177,12 @@
                 <button class="control-btn" onclick="setViewMode('paths')" id="paths-btn">Parcours</button>
                 <button class="control-btn" onclick="setViewMode('heatmap')" id="heatmap-btn">Heatmap</button>
                 <button class="control-btn" onclick="togglePathAnimation()" id="animate-btn" style="display: none;" title="Basculer entre mode statique et animé">🎬 Animer</button>
+                <div id="animation-controls" style="display: none; margin-left: 10px; border-left: 1px solid #d1d5db; padding-left: 10px;">
+                    <button class="control-btn" onclick="changeAnimationSpeed(0.5)" title="Vitesse x0.5">🐌</button>
+                    <button class="control-btn" onclick="changeAnimationSpeed(1)" title="Vitesse normale">1x</button>
+                    <button class="control-btn" onclick="changeAnimationSpeed(2)" title="Vitesse x2">🏃</button>
+                    <button class="control-btn" onclick="changeAnimationSpeed(5)" title="Vitesse x5">⚡</button>
+                </div>
                 <button class="control-btn" onclick="refreshData()">🔄 Actualiser</button>
                 <button class="control-btn" onclick="resetChallengePositions()" title="Reset des positions des challenges">📍 Reset Positions</button>
                 <div style="margin-left: 15px; border-left: 1px solid #d1d5db; padding-left: 15px;">
@@ -1154,6 +1247,28 @@
                         <g id="d3-nodes"></g>
                     </g>
                 </svg>
+            </div>
+
+            <!-- Animation Timeline -->
+            <div id="animation-timeline" class="animation-timeline" style="display: none;">
+                <div class="timeline-header">
+                    <div class="timeline-title">⏱️ Chronométrage du Parcours</div>
+                    <div class="timeline-current-time" id="timeline-current-time">00:00:00</div>
+                </div>
+                <div class="timeline-info">
+                    <div class="timeline-team" id="timeline-team">-</div>
+                    <div class="timeline-challenge" id="timeline-challenge">-</div>
+                    <div class="timeline-duration" id="timeline-duration">-</div>
+                </div>
+                <div class="timeline-progress">
+                    <div class="timeline-bar">
+                        <div class="timeline-fill" id="timeline-fill"></div>
+                    </div>
+                    <div class="timeline-labels">
+                        <span id="timeline-start">Début</span>
+                        <span id="timeline-end">Fin</span>
+                    </div>
+                </div>
             </div>
 
             <div class="stats-panel">

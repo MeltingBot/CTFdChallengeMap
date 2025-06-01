@@ -1082,7 +1082,12 @@ let pathAnimationState = {
     currentStep: 0,
     totalSteps: 0,
     animationId: null,
-    teamSolveSequences: {} // Store solve sequences for each team
+    teamSolveSequences: {}, // Store solve sequences for each team
+    speedMultiplier: 1, // Current speed multiplier
+    startTime: null, // Competition start time (first solve)
+    endTime: null, // Competition end time (last solve)
+    currentVirtualTime: null, // Current virtual time being displayed
+    allEvents: [] // All solve events sorted by date
 };
 
 /**
@@ -1163,12 +1168,28 @@ function startPathAnimation() {
     // Reset animation state
     pathAnimationState.currentStep = 0;
     pathAnimationState.isPlaying = true;
+    pathAnimationState.startTime = Date.now();
+    
+    // Calculate all solve events
+    pathAnimationState.allEvents = calculateAllSolveEvents();
+    
+    // Initialize timeline
+    if (pathAnimationState.allEvents.length > 0) {
+        pathAnimationState.startTime = pathAnimationState.allEvents[0].date;
+        pathAnimationState.endTime = pathAnimationState.allEvents[pathAnimationState.allEvents.length - 1].date;
+        pathAnimationState.currentVirtualTime = pathAnimationState.startTime;
+        initializeTimeline();
+        showTimeline();
+    }
     
     // Clear existing paths
     d3Data.pathGroup.selectAll('*').remove();
     
     // Setup markers for all teams
     setupTeamMarkers();
+    
+    // Show animation controls
+    showAnimationControls();
     
     // Start the animation loop
     updateAnimateButton('⏹️ Arrêter');
@@ -1186,6 +1207,8 @@ function stopPathAnimation() {
     pathAnimationState.isPlaying = false;
     pathAnimationState.currentStep = 0;
     updateAnimateButton('🎬 Animer');
+    hideTimeline();
+    hideAnimationControls();
     console.log('⏹️ Path animation stopped');
 }
 
@@ -1198,6 +1221,8 @@ function setupTeamMarkers() {
         defs = d3Data.svg.append('defs');
     }
     
+    console.log('🏹 Setting up markers for teams:', window.selectedTeams);
+    
     window.selectedTeams.forEach((teamName, teamIndex) => {
         const team = window.teams.find(t => t.name === teamName);
         if (!team) return;
@@ -1206,20 +1231,26 @@ function setupTeamMarkers() {
         
         // Create arrowhead marker for this team
         const markerId = `arrow-${teamName.replace(/\s+/g, '-')}`;
+        console.log(`🏹 Creating marker: ${markerId} with color: ${teamColor}`);
+        
         defs.select(`#${markerId}`).remove(); // Remove if exists
         
-        defs.append('marker')
+        const marker = defs.append('marker')
             .attr('id', markerId)
             .attr('viewBox', '0 0 10 10')
             .attr('refX', 8)
             .attr('refY', 5)
-            .attr('markerWidth', 4)
-            .attr('markerHeight', 4)
+            .attr('markerWidth', 6)
+            .attr('markerHeight', 6)
             .attr('orient', 'auto')
-            .append('path')
+            .attr('markerUnits', 'strokeWidth');
+            
+        marker.append('path')
             .attr('d', 'M 0 0 L 10 5 L 0 10 z')
             .attr('fill', teamColor)
             .attr('opacity', 0.8);
+            
+        console.log(`✅ Marker created: ${markerId}`);
     });
 }
 
@@ -1229,28 +1260,20 @@ function setupTeamMarkers() {
 function animateNextStep() {
     if (!pathAnimationState.isPlaying) return;
     
-    // Collect all solve events across all teams, sorted by date
-    const allSolveEvents = [];
-    Object.entries(pathAnimationState.teamSolveSequences).forEach(([teamName, solves]) => {
-        solves.forEach((solve, index) => {
-            if (index > 0) { // Skip first solve (no path to draw)
-                allSolveEvents.push({
-                    teamName,
-                    fromSolve: solves[index - 1],
-                    toSolve: solve,
-                    date: solve.date
-                });
-            }
-        });
-    });
-    
-    // Sort all events by date
-    allSolveEvents.sort((a, b) => a.date - b.date);
+    const allSolveEvents = pathAnimationState.allEvents;
     
     if (pathAnimationState.currentStep >= allSolveEvents.length) {
         // Animation complete
         pathAnimationState.isPlaying = false;
         console.log('✅ Path animation completed');
+        const lastEvent = allSolveEvents[allSolveEvents.length - 1];
+        const endTime = pathAnimationState.endTime;
+        const startTime = pathAnimationState.startTime;
+        const totalDuration = endTime - startTime;
+        
+        // Show final timeline state
+        document.getElementById('timeline-current-time').textContent = formatCumulativeDuration(totalDuration);
+        document.getElementById('timeline-fill').style.width = '100%';
         return;
     }
     
@@ -1262,6 +1285,9 @@ function animateNextStep() {
     
     console.log(`🎬 Step ${pathAnimationState.currentStep + 1}/${allSolveEvents.length}: ${currentEvent.teamName} → ${currentEvent.toSolve.node.name}`);
     
+    // Update timeline with current event
+    updateTimeline(currentEvent, pathAnimationState.currentStep + 1, allSolveEvents.length);
+    
     // Draw this path segment
     drawAnimatedPath(currentEvent, teamColor, teamIndex);
     
@@ -1269,7 +1295,7 @@ function animateNextStep() {
     pathAnimationState.currentStep++;
     pathAnimationState.animationId = setTimeout(() => {
         animateNextStep();
-    }, pathAnimationState.speed);
+    }, pathAnimationState.speed / pathAnimationState.speedMultiplier);
 }
 
 /**
@@ -1391,6 +1417,186 @@ function setAnimationSpeed(speed) {
 }
 
 /**
+ * Change animation speed multiplier
+ */
+function changeAnimationSpeed(multiplier) {
+    pathAnimationState.speedMultiplier = multiplier;
+    console.log(`🎬 Animation speed multiplier set to ${multiplier}x`);
+    
+    // Update UI to show active speed button
+    document.querySelectorAll('#animation-controls .control-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Find and activate the corresponding button
+    const buttons = document.querySelectorAll('#animation-controls .control-btn');
+    const speeds = [0.5, 1, 2, 5];
+    const index = speeds.indexOf(multiplier);
+    if (index !== -1 && buttons[index]) {
+        buttons[index].classList.add('active');
+    }
+}
+
+/**
+ * Calculate all solve events across teams
+ */
+function calculateAllSolveEvents() {
+    const allSolveEvents = [];
+    
+    Object.entries(pathAnimationState.teamSolveSequences).forEach(([teamName, solves]) => {
+        solves.forEach((solve, index) => {
+            if (index > 0) { // Skip first solve (no path to draw)
+                allSolveEvents.push({
+                    teamName,
+                    fromSolve: solves[index - 1],
+                    toSolve: solve,
+                    date: solve.date
+                });
+            }
+        });
+    });
+    
+    // Sort all events by date
+    allSolveEvents.sort((a, b) => a.date - b.date);
+    return allSolveEvents;
+}
+
+/**
+ * Initialize timeline display
+ */
+function initializeTimeline() {
+    const events = pathAnimationState.allEvents;
+    if (events.length === 0) return;
+    
+    const startTime = pathAnimationState.startTime;
+    const endTime = pathAnimationState.endTime;
+    const totalDuration = endTime - startTime;
+    
+    document.getElementById('timeline-start').textContent = '00:00:00';
+    document.getElementById('timeline-end').textContent = formatCumulativeDuration(totalDuration);
+    document.getElementById('timeline-current-time').textContent = '00:00:00';
+    document.getElementById('timeline-team').textContent = '-';
+    document.getElementById('timeline-challenge').textContent = 'Prêt à commencer';
+    document.getElementById('timeline-duration').textContent = '-';
+    document.getElementById('timeline-fill').style.width = '0%';
+}
+
+/**
+ * Update timeline display
+ */
+function updateTimeline(currentEvent, currentStep, totalSteps) {
+    const events = pathAnimationState.allEvents;
+    if (events.length === 0) return;
+    
+    const currentTime = currentEvent.date;
+    const startTime = pathAnimationState.startTime;
+    const endTime = pathAnimationState.endTime;
+    
+    // Calculate cumulative time since competition start
+    const cumulativeTime = currentTime - startTime;
+    const totalDuration = endTime - startTime;
+    const progress = (cumulativeTime / totalDuration) * 100;
+    
+    // Calculate duration since previous solve for this team
+    let duration = 'Premier flag';
+    if (currentEvent.fromSolve) {
+        const timeDiff = currentTime - currentEvent.fromSolve.date;
+        duration = formatDuration(timeDiff);
+    }
+    
+    // Update display
+    document.getElementById('timeline-current-time').textContent = formatCumulativeDuration(cumulativeTime);
+    document.getElementById('timeline-team').textContent = `Équipe: ${currentEvent.teamName}`;
+    document.getElementById('timeline-challenge').textContent = `Challenge: ${currentEvent.toSolve.node.name}`;
+    document.getElementById('timeline-duration').textContent = `Délai: ${duration}`;
+    document.getElementById('timeline-fill').style.width = `${Math.max(0, Math.min(100, progress))}%`;
+}
+
+/**
+ * Show/hide timeline
+ */
+function showTimeline() {
+    document.getElementById('animation-timeline').style.display = 'block';
+}
+
+function hideTimeline() {
+    document.getElementById('animation-timeline').style.display = 'none';
+}
+
+/**
+ * Show/hide animation controls
+ */
+function showAnimationControls() {
+    document.getElementById('animation-controls').style.display = 'block';
+    // Set default speed active
+    changeAnimationSpeed(1);
+}
+
+function hideAnimationControls() {
+    document.getElementById('animation-controls').style.display = 'none';
+}
+
+/**
+ * Format time for display
+ */
+function formatTime(date) {
+    if (!date) return '00:00:00';
+    
+    if (typeof date === 'string') {
+        date = new Date(date);
+    }
+    
+    return date.toLocaleTimeString('fr-FR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+/**
+ * Format duration in milliseconds to human readable
+ */
+function formatDuration(milliseconds) {
+    if (!milliseconds || milliseconds < 0) return '0s';
+    
+    const seconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+        return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+    } else {
+        return `${seconds}s`;
+    }
+}
+
+/**
+ * Format cumulative duration for timeline display (DD:HH:MM:SS format)
+ */
+function formatCumulativeDuration(milliseconds) {
+    if (!milliseconds || milliseconds < 0) return '00:00:00';
+    
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const seconds = totalSeconds % 60;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const minutes = totalMinutes % 60;
+    const totalHours = Math.floor(totalMinutes / 60);
+    const hours = totalHours % 24;
+    const days = Math.floor(totalHours / 24);
+    
+    // Format according to duration length
+    if (days > 0) {
+        return `${days}j ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    } else if (totalHours > 0) {
+        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    } else {
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+}
+
+/**
  * Update team paths in static mode (show all at once)
  */
 function updateTeamPathsStatic() {
@@ -1482,6 +1688,7 @@ function updateTeamPathsStatic() {
                 .attr('d', pathString);
             
             // Draw main path
+            console.log(`🏹 Drawing path with marker: url(#${markerId})`);
             d3Data.pathGroup.append('path')
                 .attr('class', `team-path team-path-${teamIndex}`)
                 .attr('stroke', teamColor)
@@ -1507,6 +1714,7 @@ window.updateTeamPaths = safeD3Operation(updateTeamPaths, 'update team paths');
 window.togglePathAnimation = safeD3Operation(togglePathAnimation, 'toggle path animation');
 window.startPathAnimation = safeD3Operation(startPathAnimation, 'start path animation');
 window.stopPathAnimation = safeD3Operation(stopPathAnimation, 'stop path animation');
+window.changeAnimationSpeed = safeD3Operation(changeAnimationSpeed, 'change animation speed');
 
 // Export d3Data for debugging
 window.d3Data = d3Data;
