@@ -139,20 +139,25 @@ function calculateChallengeHeatmap() {
                     return; // Ignorer cette entrée
                 }
                 
-                // Find previous challenge solve to calculate time difference
-                const previousSolve = findPreviousSolveForTeam(teamName, challengeId, solveDate);
-                if (previousSolve) {
-                    const prevDate = new Date(previousSolve.date);
-                    if (!isNaN(prevDate.getTime())) {
-                        const timeDiff = solveDate - prevDate;
-                        solveTimes.push(timeDiff);
-                    }
+                // Find when challenge was unlocked for this team
+                const unlockTime = findChallengeUnlockTime(teamName, challengeId);
+                if (unlockTime) {
+                    // Calculate time from unlock to solve
+                    const timeDiff = solveDate - unlockTime;
+                    solveTimes.push(timeDiff);
                 } else {
-                    // For first challenge, use time from CTF start (approximation)
-                    // We can use a baseline or skip if no reference point
-                    const ctfStart = new Date(solveDate);
-                    ctfStart.setHours(ctfStart.getHours() - 1); // Assume 1 hour before first solve
-                    solveTimes.push(solveDate - ctfStart);
+                    // No dependencies, use time from first solve
+                    const firstSolve = findFirstSolveForTeam(teamName);
+                    if (firstSolve) {
+                        const firstSolveDate = new Date(firstSolve.date);
+                        if (!isNaN(firstSolveDate.getTime())) {
+                            const timeDiff = solveDate - firstSolveDate;
+                            solveTimes.push(timeDiff);
+                        }
+                    } else {
+                        // Fallback: use 1 hour as default time
+                        solveTimes.push(3600000); // 1 hour in ms
+                    }
                 }
             }
         });
@@ -439,6 +444,8 @@ async function loadChallengeSolves(challengeId) {
                         place: 1,
                         timeDiff: null,
                         timeDiffStr: '',
+                        timeFromUnlock: null,
+                        timeFromUnlockStr: '',
                         timeFromPrevChall: null,
                         timeFromPrevChallStr: '',
                         relativeTime,
@@ -446,7 +453,14 @@ async function loadChallengeSolves(challengeId) {
                         attempts: 1
                     }];
                     
-                    // Calculer le temps depuis le challenge précédent
+                    // Calculer le temps depuis que le challenge est disponible
+                    const unlockTime = findChallengeUnlockTime(teamName, challengeId);
+                    if (unlockTime) {
+                        solveData[0].timeFromUnlock = solveDate - unlockTime;
+                        solveData[0].timeFromUnlockStr = formatTimeDiffDetailed(solveData[0].timeFromUnlock);
+                    }
+                    
+                    // Calculer le temps depuis le challenge précédent (n'importe lequel)
                     const prevChallSolve = findPreviousSolveForTeam(teamName, challengeId, solveDate);
                     if (prevChallSolve) {
                         solveData[0].timeFromPrevChall = solveDate - new Date(prevChallSolve.date);
@@ -527,7 +541,16 @@ async function loadChallengeSolves(challengeId) {
                 timeDiffStr = formatTimeDiffDetailed(timeDiff);
             }
             
-            // Calculer le temps depuis le challenge précédent pour cette équipe
+            // Calculer le temps depuis que le challenge est disponible
+            let timeFromUnlock = null;
+            let timeFromUnlockStr = '';
+            const unlockTime = findChallengeUnlockTime(teamSolve.teamName, challengeId);
+            if (unlockTime) {
+                timeFromUnlock = teamSolve.date - unlockTime;
+                timeFromUnlockStr = formatTimeDiffDetailed(timeFromUnlock);
+            }
+            
+            // Calculer le temps depuis le challenge précédent pour cette équipe (n'importe lequel)
             let timeFromPrevChall = null;
             let timeFromPrevChallStr = '';
             const prevChallSolve = findPreviousSolveForTeam(teamSolve.teamName, challengeId, teamSolve.date);
@@ -553,6 +576,8 @@ async function loadChallengeSolves(challengeId) {
                 place: index + 1,
                 timeDiff,
                 timeDiffStr,
+                timeFromUnlock,
+                timeFromUnlockStr,
                 timeFromPrevChall,
                 timeFromPrevChallStr,
                 relativeTime,
@@ -629,6 +654,82 @@ function findFirstSolveForTeam(teamName) {
     }
     
     return firstSolve;
+}
+
+// Trouve quand un challenge devient disponible pour une équipe (quand tous ses prérequis sont résolus)
+function findChallengeUnlockTime(teamName, challengeId) {
+    const challenge = challengeMap[challengeId];
+    if (!challenge || !challenge.dependencies || challenge.dependencies.length === 0) {
+        // Pas de dépendances, disponible dès le début
+        return null;
+    }
+    
+    const teamSolves = teamProgress[teamName];
+    if (!teamSolves) return null;
+    
+    let latestDependencyDate = null;
+    
+    // Trouver la date de résolution la plus tardive parmi toutes les dépendances
+    for (const depId of challenge.dependencies) {
+        const depProgress = teamSolves[depId];
+        if (!depProgress || !(depProgress.solved === true || depProgress.status === 'solved')) {
+            // Une dépendance n'est pas résolue, le challenge n'est pas disponible
+            return null;
+        }
+        
+        if (!depProgress.date) continue;
+        
+        const depDate = new Date(depProgress.date);
+        if (isNaN(depDate.getTime())) continue;
+        
+        if (!latestDependencyDate || depDate > latestDependencyDate) {
+            latestDependencyDate = depDate;
+        }
+    }
+    
+    return latestDependencyDate;
+}
+
+// Version modifiée de findPreviousSolveForTeam qui prend en compte le moment où le challenge devient disponible
+function findPreviousSolveForTeamWithDependencies(teamName, currentChallengeId, currentSolveDate) {
+    const unlockTime = findChallengeUnlockTime(teamName, currentChallengeId);
+    
+    const teamSolves = teamProgress[teamName];
+    if (!teamSolves) return null;
+    
+    let mostRecentSolve = null;
+    let mostRecentDate = null;
+    
+    for (const [challId, progress] of Object.entries(teamSolves)) {
+        // Ignorer le challenge actuel et les non-résolus
+        if (challId === currentChallengeId || 
+            !(progress.solved === true || progress.status === 'solved')) continue;
+        
+        if (!progress.date) continue;
+        
+        const solveDate = new Date(progress.date);
+        if (isNaN(solveDate.getTime())) continue;
+        
+        // Si on a un temps de déblocage, chercher les solves entre le déblocage et la résolution actuelle
+        if (unlockTime) {
+            if (solveDate >= unlockTime && solveDate < currentSolveDate) {
+                if (!mostRecentDate || solveDate > mostRecentDate) {
+                    mostRecentSolve = { challengeId: challId, ...progress };
+                    mostRecentDate = solveDate;
+                }
+            }
+        } else {
+            // Comportement original : chercher les solves avant la date actuelle
+            if (solveDate < currentSolveDate) {
+                if (!mostRecentDate || solveDate > mostRecentDate) {
+                    mostRecentSolve = { challengeId: challId, ...progress };
+                    mostRecentDate = solveDate;
+                }
+            }
+        }
+    }
+    
+    return mostRecentSolve;
 }
 
 function displayChallengeSolves(solvesData, challengeId) {
@@ -711,13 +812,23 @@ function displayChallengeSolves(solvesData, challengeId) {
                         </div>
                         <div style="text-align: right; min-width: 160px;">
                             ${solve.relativeTimeStr ? `
+                                <div style="background: #fef3c7; 
+                                          border: 1px solid #fbbf24;
+                                          border-radius: 6px; 
+                                          padding: 4px 8px;
+                                          margin-bottom: 4px;">
+                                    <div style="font-size: 10px; color: #92400e; font-weight: 500;">Temps total CTF</div>
+                                    <div style="font-size: 14px; color: #78350f; font-weight: 600;">${solve.relativeTimeStr}</div>
+                                </div>
+                            ` : ''}
+                            ${solve.timeFromUnlockStr ? `
                                 <div style="background: #f3e8ff; 
                                           border: 1px solid #c084fc;
                                           border-radius: 6px; 
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
-                                    <div style="font-size: 10px; color: #6b21a8; font-weight: 500;">Temps relatif</div>
-                                    <div style="font-size: 14px; color: #581c87; font-weight: 600;">${solve.relativeTimeStr}</div>
+                                    <div style="font-size: 10px; color: #6b21a8; font-weight: 500;">Temps de résolution</div>
+                                    <div style="font-size: 14px; color: #581c87; font-weight: 600;">${solve.timeFromUnlockStr}</div>
                                 </div>
                             ` : ''}
                             ${solve.timeFromPrevChallStr ? `
@@ -726,7 +837,7 @@ function displayChallengeSolves(solvesData, challengeId) {
                                           border-radius: 6px; 
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
-                                    <div style="font-size: 10px; color: #1e40af; font-weight: 500;">Depuis dernier chall</div>
+                                    <div style="font-size: 10px; color: #1e40af; font-weight: 500;">Pause depuis dernier</div>
                                     <div style="font-size: 14px; color: #1e3a8a; font-weight: 600;">${solve.timeFromPrevChallStr}</div>
                                 </div>
                             ` : ''}
@@ -1762,7 +1873,7 @@ async function preloadAllTeams() {
         
         // Méthode 1: Vérifier si l'endpoint teams retourne des données
         try {
-            const teamsTestResponse = await callCTFdAPI('/api/v1/teams?page=1');
+            const teamsTestResponse = await callCTFdAPI(`/api/v1/teams?page=1${userPermissions.isAdmin ? '&view=admin' : ''}`);
             if (!teamsTestResponse.data || teamsTestResponse.data.length === 0) {
                 debugLog('Aucune équipe trouvée - possible mode individuel');
                 isIndividualMode = true;
@@ -1799,7 +1910,7 @@ async function preloadAllTeams() {
             
             while (hasMore) {
                 showLoginLoader(`Chargement des joueurs (page ${page})...`);
-                const usersResponse = await callCTFdAPI(`/api/v1/users?page=${page}`);
+                const usersResponse = await callCTFdAPI(`/api/v1/users?page=${page}${userPermissions.isAdmin ? '&view=admin' : ''}`);
                 if (usersResponse.data && usersResponse.data.length > 0) {
                     allUsers = allUsers.concat(usersResponse.data);
                     if (usersResponse.data.length < 50) {
@@ -1821,6 +1932,8 @@ async function preloadAllTeams() {
                 score: user.score || 0,
                 place: user.place || (index + 1),
                 color: userColors[index],
+                hidden: user.hidden || false,
+                banned: user.banned || false,
                 isIndividual: true
             })));
             
@@ -1830,7 +1943,7 @@ async function preloadAllTeams() {
         // Mode équipe standard
         while (hasMore) {
             showLoginLoader(`Chargement des équipes (page ${page})...`);
-            const teamsResponse = await callCTFdAPI(`/api/v1/teams?page=${page}`);
+            const teamsResponse = await callCTFdAPI(`/api/v1/teams?page=${page}${userPermissions.isAdmin ? '&view=admin' : ''}`);
             if (teamsResponse.data && teamsResponse.data.length > 0) {
                 allTeams = allTeams.concat(teamsResponse.data);
                 // CTFd retourne généralement 50 équipes par page
@@ -1855,6 +1968,8 @@ async function preloadAllTeams() {
             score: team.score || 0,
             place: team.place || (index + 1),
             color: teamColors[index],
+            hidden: team.hidden || false,
+            banned: team.banned || false,
             // Les solves seront chargés à la demande
             solvesLoaded: false
         })));
@@ -2472,11 +2587,23 @@ function generateTeamFilters(searchTerm = '') {
             progressText = `📊 Not loaded`;
         }
         
+        // Ajouter des indicateurs pour les équipes cachées/bannies
+        let statusIndicator = '';
+        let teamStyle = '';
+        if (team.hidden) {
+            statusIndicator = ' 👻';
+            teamStyle = 'opacity: 0.7;';
+        }
+        if (team.banned) {
+            statusIndicator = ' 🚫';
+            teamStyle = 'opacity: 0.5; text-decoration: line-through;';
+        }
+        
         return `
-            <label class="team-checkbox">
+            <label class="team-checkbox" style="${teamStyle}" title="${team.hidden ? 'Équipe cachée' : ''}${team.banned ? 'Équipe bannie' : ''}">
                 <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleTeam('${team.name}', this)">
                 <div class="team-color" style="background: ${team.color};"></div>
-                <span class="team-name">${team.name}</span>
+                <span class="team-name">${team.name}${statusIndicator}</span>
                 <span class="team-progress">${progressText}</span>
             </label>
         `;
