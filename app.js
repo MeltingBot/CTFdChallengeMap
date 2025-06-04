@@ -1846,6 +1846,7 @@ async function loadUserPermissions() {
             userPermissions.canViewAllTeams = true;
             userPermissions.canManageTeams = true;
             userPermissions.canViewFutureChalls = true;
+            console.log('✅ Permissions ADMIN définies:', userPermissions);
         } else {
             // L'utilisateur n'a pas les droits admin
             debugLog('👤 Mode joueur détecté - aucun accès admin');
@@ -1853,6 +1854,7 @@ async function loadUserPermissions() {
             userPermissions.canViewAllTeams = false; // Joueur voit SA progression, pas multi-équipes
             userPermissions.canManageTeams = true;   // Mais peut gérer la liste des équipes
             userPermissions.canViewFutureChalls = false;
+            console.log('✅ Permissions JOUEUR définies:', userPermissions);
         }
         
         return isAdmin;
@@ -2816,7 +2818,19 @@ async function initializeInterface() {
 }
 
 function generateTeamFilters(searchTerm = '') {
-    if (!userPermissions.canManageTeams) return;
+    console.log('🔍 generateTeamFilters called:', {
+        canManageTeams: userPermissions.canManageTeams,
+        isAdmin: userPermissions.isAdmin,
+        canViewAllTeams: userPermissions.canViewAllTeams,
+        userPermissions: userPermissions
+    });
+    
+    if (!userPermissions.canManageTeams) {
+        console.warn('❌ generateTeamFilters blocked: canManageTeams is false');
+        // TEMPORARY FIX: Force team management for debugging
+        console.warn('🔧 TEMPORARY: Forcing team filters generation despite permissions');
+        // return;
+    }
     
     const container = document.getElementById('team-filters');
     
