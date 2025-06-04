@@ -376,6 +376,44 @@ function syncTeamProgress() {
 
 // ==================== CHALLENGE SOLVES MODAL ====================
 
+/**
+ * Get total number of teams/users who solved a challenge
+ */
+async function getTotalSolvesForChallenge(challengeId) {
+    try {
+        // For admin users, try to get total solves from the API
+        if (userPermissions.isAdmin) {
+            try {
+                const response = await callCTFdAPI(`/api/v1/challenges/${challengeId}/solves`, 'GET');
+                if (response.data && Array.isArray(response.data)) {
+                    return {
+                        total: response.data.length,
+                        isFromAPI: true
+                    };
+                }
+            } catch (error) {
+                debugLog('Could not fetch total solves from API, falling back to local data');
+            }
+        }
+        
+        // Fallback: Count from loaded team data
+        let totalSolves = 0;
+        Object.values(teamProgress).forEach(team => {
+            if (team[challengeId] && (team[challengeId].solved === true || team[challengeId].status === 'solved')) {
+                totalSolves++;
+            }
+        });
+        
+        return {
+            total: totalSolves,
+            isFromAPI: false
+        };
+    } catch (error) {
+        console.error('Error getting total solves:', error);
+        return { total: 0, isFromAPI: false };
+    }
+}
+
 async function showChallengeSolvesModal(challengeId) {
     const challenge = challengeMap[challengeId];
     if (!challenge) return;
@@ -449,6 +487,9 @@ async function loadChallengeSolves(challengeId) {
             teamProgressKeys: Object.keys(teamProgress)
         });
         
+        // Get total solves for this challenge
+        const totalSolvesInfo = await getTotalSolvesForChallenge(challengeId);
+        
         // Si on est en mode utilisateur (pas admin), utiliser les données depuis teamProgress
         if (!userPermissions.isAdmin) {
             // Pour un utilisateur normal, afficher uniquement son équipe
@@ -511,13 +552,13 @@ async function loadChallengeSolves(challengeId) {
                         solveData[0].timeFromPrevChallStr = formatTimeDiffDetailed(solveData[0].timeFromPrevChall);
                     }
                     
-                    displayChallengeSolves(solveData, challengeId);
+                    displayChallengeSolves(solveData, challengeId, totalSolvesInfo);
                     return;
                 }
             }
             
             // Pas de solve pour cet utilisateur
-            displayChallengeSolves([], challengeId);
+            displayChallengeSolves([], challengeId, totalSolvesInfo);
             return;
         }
         
@@ -632,19 +673,27 @@ async function loadChallengeSolves(challengeId) {
         });
         
         // Afficher les résultats
-        displayChallengeSolves(solvesData, challengeId);
+        displayChallengeSolves(solvesData, challengeId, totalSolvesInfo);
         
     } catch (error) {
         console.error('Erreur chargement solves:', error);
-        document.getElementById('solves-loading').innerHTML = `
-            <div style="color: #ef4444;">❌ Erreur de chargement</div>
-            <div style="font-size: 12px; margin-top: 8px; color: #dc2626;">
-                ${error.message || 'Erreur inconnue'}
-            </div>
-            <div style="font-size: 11px; margin-top: 8px; color: #7f1d1d;">
-                Vérifiez la console pour plus de détails
-            </div>
-        `;
+        
+        // Try to show total solves even if detailed loading failed
+        try {
+            const totalSolvesInfo = await getTotalSolvesForChallenge(challengeId);
+            displayChallengeSolves([], challengeId, totalSolvesInfo);
+        } catch (totalError) {
+            // If even total solves fails, show error message
+            document.getElementById('solves-loading').innerHTML = `
+                <div style="color: #ef4444;">❌ Erreur de chargement</div>
+                <div style="font-size: 12px; margin-top: 8px; color: #dc2626;">
+                    ${error.message || 'Erreur inconnue'}
+                </div>
+                <div style="font-size: 11px; margin-top: 8px; color: #7f1d1d;">
+                    Vérifiez la console pour plus de détails
+                </div>
+            `;
+        }
     }
 }
 
@@ -777,7 +826,7 @@ function findPreviousSolveForTeamWithDependencies(teamName, currentChallengeId, 
     return mostRecentSolve;
 }
 
-function displayChallengeSolves(solvesData, challengeId) {
+function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
     const content = document.getElementById('solves-content');
     const loading = document.getElementById('solves-loading');
     const challenge = challengeMap[challengeId];
@@ -817,6 +866,10 @@ function displayChallengeSolves(solvesData, challengeId) {
                     ${userPermissions.isAdmin ? 
                         `<div style="font-size: 12px; color: #0c4a6e; margin-top: 4px;">
                             Parmi les ${selectedTeams.length} équipe(s) sélectionnée(s)
+                        </div>` : ''}
+                    ${totalSolves && totalSolves.total > 0 ? 
+                        `<div style="font-size: 12px; color: #0c4a6e; margin-top: 4px; background: #e0f2fe; border: 1px solid #81d4fa; border-radius: 4px; padding: 2px 6px; display: inline-block;">
+                            📊 Total CTF: ${totalSolves.total} ${teams.length > 0 && !userPermissions.isAdmin ? 'équipe(s)' : 'résolution(s)'}
                         </div>` : ''}
                 </div>
                 ${averageTime > 0 ? `
