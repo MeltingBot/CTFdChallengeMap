@@ -27,10 +27,17 @@ const D3_CONFIG = {
     nodeHeight: 80,
     statusRadius: 12,
     forceStrength: {
-        link: 0.3,
-        charge: -800,
-        collision: 150,
-        center: 0.1
+        link: 0.8,           // Force plus forte pour maintenir les liens
+        charge: -1200,       // Répulsion plus forte pour éviter le chevauchement
+        collision: 160,      // Rayon de collision légèrement augmenté
+        center: 0.05,        // Force de centrage réduite pour plus de liberté
+        x: 0.1,             // Force horizontale pour aligner
+        y: 0.1              // Force verticale pour aligner
+    },
+    simulation: {
+        alpha: 0.5,          // Alpha initial réduit pour moins de rebond
+        alphaDecay: 0.02,    // Décroissance plus rapide de l'alpha
+        velocityDecay: 0.3   // Friction augmentée pour réduire l'élasticité
     },
     animation: {
         duration: 300,
@@ -215,18 +222,34 @@ function setupD3ForceSimulation() {
     d3Data.simulation = d3.forceSimulation()
         .force('link', d3.forceLink()
             .id(d => d.id)
-            .distance(200)
+            .distance(d => {
+                // Distance variable selon le type de lien
+                const baseDistance = 250;
+                return baseDistance;
+            })
             .strength(D3_CONFIG.forceStrength.link)
         )
         .force('charge', d3.forceManyBody()
-            .strength(D3_CONFIG.forceStrength.charge)
+            .strength(d => {
+                // Force variable selon le nombre de connexions
+                const connections = (d.dependencies ? d.dependencies.length : 0);
+                return D3_CONFIG.forceStrength.charge * (1 + connections * 0.2);
+            })
         )
         .force('collision', d3.forceCollide()
             .radius(D3_CONFIG.forceStrength.collision)
+            .strength(0.9) // Force de collision élevée pour éviter le chevauchement
         )
         .force('center', d3.forceCenter(0, 0)
             .strength(D3_CONFIG.forceStrength.center)
         )
+        // Ajout de forces d'alignement pour un rendu plus ordonné
+        .force('x', d3.forceX(0).strength(D3_CONFIG.forceStrength.x))
+        .force('y', d3.forceY(0).strength(D3_CONFIG.forceStrength.y))
+        // Configuration de la simulation pour réduire l'élasticité
+        .alpha(D3_CONFIG.simulation.alpha)
+        .alphaDecay(D3_CONFIG.simulation.alphaDecay)
+        .velocityDecay(D3_CONFIG.simulation.velocityDecay)
         .on('tick', throttle(updateD3Positions, 16)); // ~60fps
     
     // Stop simulation initially
@@ -316,8 +339,125 @@ function convertToD3Data(challengeMap, teamProgress = {}) {
         });
     });
     
+    // Calculate intelligent initial positioning based on dependencies
+    calculateInitialLayout(nodes, links);
     
     return { nodes, links };
+}
+
+/**
+ * Calculate intelligent initial layout based on dependencies
+ */
+function calculateInitialLayout(nodes, links) {
+    // Calculate dependency levels (depth in the graph)
+    const levels = new Map();
+    const visited = new Set();
+    const inDegree = new Map();
+    
+    // Initialize in-degree count for each node
+    nodes.forEach(node => {
+        inDegree.set(node.id, 0);
+    });
+    
+    // Count incoming edges for each node
+    links.forEach(link => {
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        inDegree.set(targetId, (inDegree.get(targetId) || 0) + 1);
+    });
+    
+    // Find root nodes (no dependencies)
+    const queue = [];
+    nodes.forEach(node => {
+        if (inDegree.get(node.id) === 0) {
+            levels.set(node.id, 0);
+            queue.push(node.id);
+        }
+    });
+    
+    // BFS to assign levels
+    let maxLevel = 0;
+    while (queue.length > 0) {
+        const currentId = queue.shift();
+        const currentLevel = levels.get(currentId);
+        maxLevel = Math.max(maxLevel, currentLevel);
+        
+        // Find all nodes that depend on this node
+        links.forEach(link => {
+            const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+            const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+            
+            if (sourceId === currentId) {
+                const newLevel = currentLevel + 1;
+                const existingLevel = levels.get(targetId);
+                
+                if (existingLevel === undefined || newLevel > existingLevel) {
+                    levels.set(targetId, newLevel);
+                    if (!queue.includes(targetId)) {
+                        queue.push(targetId);
+                    }
+                }
+            }
+        });
+    }
+    
+    // Group nodes by category for better organization
+    const categories = new Map();
+    nodes.forEach(node => {
+        const cat = node.category || 'General';
+        if (!categories.has(cat)) {
+            categories.set(cat, []);
+        }
+        categories.get(cat).push(node);
+    });
+    
+    // Position nodes based on levels and categories
+    const levelWidth = 300; // Horizontal spacing between levels
+    const nodeSpacing = 120; // Vertical spacing between nodes
+    const categorySpacing = 150; // Extra spacing between categories
+    
+    let categoryOffset = 0;
+    Array.from(categories.entries()).forEach(([category, categoryNodes], catIndex) => {
+        // Group nodes in this category by level
+        const levelGroups = new Map();
+        categoryNodes.forEach(node => {
+            const level = levels.get(node.id) || 0;
+            if (!levelGroups.has(level)) {
+                levelGroups.set(level, []);
+            }
+            levelGroups.get(level).push(node);
+        });
+        
+        // Position nodes within each level of this category
+        Array.from(levelGroups.entries()).forEach(([level, levelNodes]) => {
+            const x = level * levelWidth - (maxLevel * levelWidth) / 2;
+            
+            levelNodes.forEach((node, index) => {
+                const totalNodesInLevel = levelNodes.length;
+                const y = categoryOffset + (index - (totalNodesInLevel - 1) / 2) * nodeSpacing;
+                
+                // Only set initial position if not manually positioned
+                if (!window.customPositions || !window.customPositions[node.id]) {
+                    node.x = x + (Math.random() - 0.5) * 50; // Small random offset
+                    node.y = y + (Math.random() - 0.5) * 50;
+                }
+            });
+        });
+        
+        // Calculate category height and update offset
+        const categoryHeight = Math.max(
+            categoryNodes.length * nodeSpacing,
+            100
+        );
+        categoryOffset += categoryHeight + categorySpacing;
+    });
+    
+    // Handle orphaned nodes (no level assigned)
+    nodes.forEach(node => {
+        if (!levels.has(node.id) && (!window.customPositions || !window.customPositions[node.id])) {
+            node.x = (Math.random() - 0.5) * 400;
+            node.y = (Math.random() - 0.5) * 400;
+        }
+    });
 }
 
 /**
@@ -425,9 +565,33 @@ function renderD3Challenges() {
         // Render nodes
         renderD3Nodes();
         
-        // Start simulation with adaptive alpha based on graph size
-        const alpha = d3Data.nodes.length > 50 ? 0.1 : 0.3;
-        d3Data.simulation.alpha(alpha).restart();
+        // Start simulation with adaptive alpha based on graph size and improved stability
+        const nodeCount = d3Data.nodes.length;
+        let alpha, alphaTarget;
+        
+        if (nodeCount > 100) {
+            alpha = 0.1;
+            alphaTarget = 0.01;
+        } else if (nodeCount > 50) {
+            alpha = 0.2;
+            alphaTarget = 0.02;
+        } else {
+            alpha = 0.3;
+            alphaTarget = 0.03;
+        }
+        
+        // Configuration pour stabilisation rapide
+        d3Data.simulation
+            .alpha(alpha)
+            .alphaTarget(alphaTarget)
+            .restart();
+        
+        // Arrêt automatique après un temps raisonnable pour éviter l'animation infinie
+        setTimeout(() => {
+            if (d3Data.simulation) {
+                d3Data.simulation.alphaTarget(0);
+            }
+        }, 3000); // 3 secondes max
         
         
     } catch (error) {
@@ -574,7 +738,8 @@ function renderD3Nodes() {
 function setupD3Drag() {
     return d3.drag()
         .on('start', function(event, d) {
-            if (!event.active) d3Data.simulation.alphaTarget(0.3).restart();
+            // Réduction de l'alphaTarget pour moins de rebond
+            if (!event.active) d3Data.simulation.alphaTarget(0.1).restart();
             
             // Add dragging visual feedback
             d3.select(this).classed('dragging', true);
@@ -589,12 +754,14 @@ function setupD3Drag() {
             
         })
         .on('drag', function(event, d) {
-            // Update node position
+            // Update node position directement sans redémarrer la simulation
             d.fx = event.x;
             d.fy = event.y;
             
-            // Force immediate update
-            d3Data.simulation.alpha(0.1).restart();
+            // Mise à jour douce sans restart pour éviter l'élasticité
+            if (d3Data.simulation.alpha() < 0.1) {
+                d3Data.simulation.alpha(0.05);
+            }
             
             // Update team paths in real-time if parcours mode is active
             if (window.parcoursMode && window.updateTeamPaths) {
@@ -602,10 +769,14 @@ function setupD3Drag() {
             }
         })
         .on('end', function(event, d) {
+            // Arrêt plus rapide de la simulation
             if (!event.active) d3Data.simulation.alphaTarget(0);
             
             // Remove dragging visual feedback
             d3.select(this).classed('dragging', false);
+            
+            // Stabilisation immédiate
+            d3Data.simulation.alpha(0.02);
             
             // Save custom position
             if (window.customPositions) {
@@ -615,9 +786,6 @@ function setupD3Drag() {
             
             // Save to session storage
             saveCustomPositions();
-            
-            // Show success notification
-            
             
             // Update team paths if parcours mode is active
             if (window.parcoursMode && window.updateTeamPaths) {

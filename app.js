@@ -315,6 +315,7 @@ let showOnlySelected = false; // Toggle pour n'afficher que les équipes sélect
 let isDraggingChallenge = false;
 let draggedChallengeId = null;
 let customPositions = {}; // Store custom positions
+window.customPositions = customPositions; // Expose for D3
 
 // Parcours mode
 let parcoursMode = false;
@@ -1309,11 +1310,13 @@ function initializeDragAndDrop() {
 
 function saveCustomPositions() {
     sessionStorage.setItem('customChallengePositions', JSON.stringify(customPositions));
+    window.customPositions = customPositions; // Sync with global
     debugLog('💾 Saved custom positions to session storage');
 }
 
 function resetChallengePositions() {
     customPositions = {};
+    window.customPositions = customPositions; // Sync with global
     sessionStorage.removeItem('customChallengePositions');
     debugLog('Challenge positions reset to automatic layout');
     
@@ -1699,6 +1702,65 @@ async function validateCTFdConnectivity(url) {
     }
 }
 
+/**
+ * Load and set user permissions based on API access
+ */
+async function loadUserPermissions() {
+    if (!currentUser.token) {
+        throw new Error('No user token available');
+    }
+    
+    try {
+        // 1. Vérifier le token et récupérer les infos utilisateur
+        const userInfo = await callCTFdAPI('/api/v1/users/me', 'GET');
+        currentUser.name = userInfo.data.name;
+        currentUser.id = userInfo.data.id;
+        
+        // 2. Tester les permissions en tentant d'accéder aux endpoints admin
+        let isAdmin = false;
+        
+        // Essayer plusieurs endpoints admin pour la compatibilité
+        const adminEndpoints = [
+            '/api/v1/admin/statistics',
+            '/api/v1/users?view=admin',  // Endpoint plus standard
+            '/api/v1/teams?view=admin'
+        ];
+        
+        for (const endpoint of adminEndpoints) {
+            try {
+                await callCTFdAPI(endpoint, 'GET');
+                // Si on arrive ici sans erreur, c'est un admin
+                isAdmin = true;
+                debugLog(`🔑 Permissions admin détectées via ${endpoint}`);
+                break;
+            } catch (error) {
+                debugLog(`❌ Pas d'accès admin à ${endpoint}`);
+                continue;
+            }
+        }
+        
+        // Définir les permissions basées sur le statut admin
+        if (isAdmin) {
+            userPermissions.isAdmin = true;
+            userPermissions.canViewAllTeams = true;
+            userPermissions.canManageTeams = true;
+            userPermissions.canViewFutureChalls = true;
+        } else {
+            // L'utilisateur n'a pas les droits admin
+            debugLog('👤 Mode joueur détecté - aucun accès admin');
+            userPermissions.isAdmin = false;
+            userPermissions.canViewAllTeams = false; // Joueur voit SA progression, pas multi-équipes
+            userPermissions.canManageTeams = true;   // Mais peut gérer la liste des équipes
+            userPermissions.canViewFutureChalls = false;
+        }
+        
+        return isAdmin;
+    } catch (error) {
+        console.error('Error loading user permissions:', error);
+        throw error;
+    }
+}
+
 async function connectToAPI() {
     const ctfdUrl = document.getElementById('ctfd-url').value.trim();
     const token = document.getElementById('api-token').value.trim();
@@ -1780,51 +1842,13 @@ async function authenticateWithCTFd(ctfdUrl, token) {
     currentUser.token = token;
     
     try {
-        // 1. Vérifier le token et récupérer les infos utilisateur
+        // Charger les permissions utilisateur
         showLoginLoader('Vérification du token...');
-        const userInfo = await callCTFdAPI('/api/v1/users/me', 'GET');
-        currentUser.name = userInfo.data.name;
-        currentUser.id = userInfo.data.id;
-        
-        // 2. Tester les permissions en tentant d'accéder aux endpoints admin
         showLoginLoader('Vérification des permissions...');
-        let isAdmin = false;
+        const isAdmin = await loadUserPermissions();
         
-        // Essayer plusieurs endpoints admin pour la compatibilité
-        const adminEndpoints = [
-            '/api/v1/admin/statistics',
-            '/api/v1/users?view=admin',  // Endpoint plus standard
-            '/api/v1/teams?view=admin'
-        ];
-        
-        for (const endpoint of adminEndpoints) {
-            try {
-                await callCTFdAPI(endpoint, 'GET');
-                // Si on arrive ici sans erreur, c'est un admin
-                isAdmin = true;
-                debugLog(`🔑 Permissions admin détectées via ${endpoint}`);
-                break;
-            } catch (error) {
-                debugLog(`❌ Pas d'accès admin à ${endpoint}`);
-                continue;
-            }
-        }
-        
-        if (isAdmin) {
-            userPermissions.isAdmin = true;
-            userPermissions.canViewAllTeams = true;
-            userPermissions.canManageTeams = true;
-            userPermissions.canViewFutureChalls = true;
-            updateAPIStatus('connected', `Admin: ${currentUser.name}`);
-        } else {
-            // L'utilisateur n'a pas les droits admin
-            debugLog('👤 Mode joueur détecté - aucun accès admin');
-            userPermissions.isAdmin = false;
-            userPermissions.canViewAllTeams = false; // Joueur voit SA progression, pas multi-équipes
-            userPermissions.canManageTeams = true;   // Mais peut gérer la liste des équipes
-            userPermissions.canViewFutureChalls = false;
-            updateAPIStatus('connected', `Joueur: ${currentUser.name}`);
-        }
+        // Mettre à jour le statut de connexion
+        updateAPIStatus('connected', `${isAdmin ? 'Admin' : 'Joueur'}: ${currentUser.name}`);
         
         // 3. Vérifier l'état du CTF (seulement pour les admins)
         let ctfName = 'CTF';
@@ -2230,6 +2254,12 @@ async function loadAdminData() {
             } catch (error) {
                 debugLog(`⚠️ Impossible de charger la progression de ${teamName}:`, error);
             }
+        }
+        
+        // Mettre à jour la visualisation après chargement des progressions
+        debugLog('🎨 Mise à jour de la visualisation après chargement des progressions admin');
+        if (d3SystemReady && window.renderD3Challenges) {
+            setTimeout(() => updateVisualization(), 100);
         }
         
         // Charger TOUS les challenges (y compris cachés) pour les admins avec view=admin
@@ -3897,6 +3927,8 @@ function refreshData() {
     // Actualiser les données via l'API CTFd
     setTimeout(async () => {
         try {
+            // Recharger les permissions utilisateur avant de charger les données
+            await loadUserPermissions();
             await loadDataBasedOnPermissions();
             updateVisualization();
             updateAPIStatus('connected', `${userPermissions.isAdmin ? 'Admin' : 'Équipe'} connecté`);
@@ -3954,6 +3986,10 @@ function logout() {
     currentViewMode = 'overview';
     window.heatmapMode = false;
     heatmapMode = false;
+    d3SystemReady = false; // IMPORTANT: Marquer D3 comme non prêt
+    d3InitializationInProgress = false;
+    buildChallengeMapInProgress = false; // Reset des flags de construction
+    buildChallengeMapCompleted = false;
     
     // Nettoyer la visualisation D3
     try {
