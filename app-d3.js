@@ -800,54 +800,32 @@ function fitToScreenD3() {
 function getChallengeStatus(challengeId, teamProgress) {
     // Determine challenge status based on team progress
     if (!userPermissions.canViewAllTeams) {
-        // Single team view
+        // Single team view - use the same logic as getChallengeOverallState
         const teamName = currentUser.teamName;
-        if (teamProgress[teamName] && teamProgress[teamName][challengeId]) {
-            const progress = teamProgress[teamName][challengeId];
-            return (progress.solved === true || progress.status === 'solved') ? 'solved' : 'attempted';
-        }
+        const progress = teamProgress[teamName] && teamProgress[teamName][challengeId];
+        
+        if (!progress) return 'hidden';
+        if (progress.solved) return 'solved';
+        if (progress.attempted) return 'attempted';
+        if (progress.locked) return 'locked';
         return 'available';
     } else {
         // Multi-team view
-        let solvedCount = 0;
-        let hasAttempts = false;
-        let teamsWithAccess = 0;
+        const hasAnyResolved = selectedTeams.some(team => 
+            teamProgress[team] && teamProgress[team][challengeId] && teamProgress[team][challengeId].solved
+        );
+        if (hasAnyResolved) return 'solved';
         
-        for (const teamName of selectedTeams) {
-            if (teamProgress[teamName] && teamProgress[teamName][challengeId]) {
-                const progress = teamProgress[teamName][challengeId];
-                if (progress.solved === true || progress.status === 'solved') {
-                    teamsWithAccess++;
-                    solvedCount++;
-                
-                // Vérifier les vraies données de submissions
-                const team = teams.find(t => t.name === teamName);
-                if (team && team.id && window.teamSubmissionsCache && window.teamSubmissionsCache[team.id]) {
-                    const failsForChallenge = window.teamSubmissionsCache[team.id][challengeId] || 0;
-                    if (failsForChallenge > 0) {
-                        hasAttempts = true;
-                    }
-                    }
-                }
-            }
-            // On ignore les équipes qui n'ont pas résolu le challenge
-        }
+        const hasAnyAttempted = selectedTeams.some(team => 
+            teamProgress[team] && teamProgress[team][challengeId] && teamProgress[team][challengeId].attempted
+        );
+        if (hasAnyAttempted) return 'attempted';
         
-        // Si aucune équipe sélectionnée n'a accès au challenge
-        if (teamsWithAccess === 0) return 'available';
-        
-        // Si au moins une équipe a des fails ou a tenté sans réussir
-        if (hasAttempts) {
-            return 'attempted';
-        }
-        
-        // Si toutes les équipes avec accès ont résolu sans fails
-        if (solvedCount === teamsWithAccess) {
-            return 'solved';
-        }
-        
-        // Cas par défaut
-        return 'available';
+        const hasAnyAvailable = selectedTeams.some(team => {
+            const progress = teamProgress[team] && teamProgress[team][challengeId];
+            return progress && !progress.locked;
+        });
+        return hasAnyAvailable ? 'available' : 'locked';
     }
 }
 
@@ -912,9 +890,14 @@ function getChallengeColor(status, challengeId = null) {
             status: '#9ca3af'
         },
         locked: {
-            background: 'url(#gradient-locked)',
+            background: '#f3f4f6',
             border: '#d1d5db',
             status: '#9ca3af'
+        },
+        hidden: {
+            background: '#f9fafb',
+            border: '#e5e7eb',
+            status: '#e5e7eb'
         }
     };
     
@@ -926,7 +909,8 @@ function getStatusIcon(status) {
         solved: '✓',
         attempted: '⚡',
         available: '●',
-        locked: '🔒'
+        locked: '🔒',
+        hidden: ''
     };
     return icons[status] || '●';
 }

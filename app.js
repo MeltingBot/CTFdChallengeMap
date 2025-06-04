@@ -10,6 +10,7 @@ window.selectedTeams = [];
 let currentViewMode = 'overview';
 let isConnected = false;
 let userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
+let teamStatusFilters = { active: true, hidden: true, banned: true }; // Filtres pour les statuts d'équipes
 
 // Configuration de debug
 const DEBUG_ENABLED = new URLSearchParams(window.location.search).get('debug') === 'true' || 
@@ -304,6 +305,17 @@ function setSelectedTeams(newTeams) {
         sessionStorage.setItem('selectedTeams', JSON.stringify(newTeams));
     } catch (e) {
         debugLog('Impossible de sauvegarder les équipes sélectionnées:', e);
+    }
+    
+    // Si on change la sélection et que l'interface est visible, mettre à jour l'affichage
+    if (document.getElementById('container').style.display !== 'none' && Object.keys(challengeMap).length > 0) {
+        // Pour les utilisateurs non-admin avec une équipe sélectionnée, forcer la mise à jour
+        if (!userPermissions.isAdmin && newTeams.length > 0) {
+            debugLog('🔄 Mise à jour automatique pour l\'équipe:', newTeams);
+            setTimeout(() => {
+                updateVisualization();
+            }, 50);
+        }
     }
     
     // Update team paths if parcours mode is active
@@ -2169,6 +2181,16 @@ async function loadUserData() {
         // Générer les données de progression
         generateUserProgressFromSubmissions(submissions);
         
+        // S'assurer que l'équipe de l'utilisateur est bien sélectionnée
+        if (currentUser.teamName && (!selectedTeams.includes(currentUser.teamName))) {
+            debugLog('🔄 Sélection automatique de l\'équipe utilisateur:', currentUser.teamName);
+            setSelectedTeams([currentUser.teamName]);
+        }
+        
+        // Forcer la mise à jour de l'affichage pour les utilisateurs non-admin
+        debugLog('🎨 Mise à jour de l\'affichage après chargement des données utilisateur');
+        updateChallengesDisplay();
+        
         // Désactiver les contrôles multi-équipes
         document.getElementById('teams-section').classList.add('admin-only');
         document.getElementById('paths-btn').classList.add('disabled');
@@ -2340,21 +2362,24 @@ function generateUserProgressFromSubmissions(userSolves) {
     const teamName = currentUser.teamName;
     teamProgress[teamName] = {};
     
+    // D'abord, créer une map des challenges résolus
+    const solvedChallenges = new Set();
+    userSolves.forEach(solve => {
+        solvedChallenges.add(String(solve.challenge_id));
+    });
+    
+    // Ensuite, traiter tous les challenges
     Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
-        // Vérifier si l'utilisateur a résolu ce challenge  
-        const challengeIdNum = parseInt(challengeId);
-        const solve = userSolves.find(s => s.challenge_id === challengeIdNum);
-        const solved = !!solve;
+        const solved = solvedChallenges.has(challengeId);
+        const solve = solved ? userSolves.find(s => String(s.challenge_id) === challengeId) : null;
         
-        // Pour les équipes, ne montrer que les challenges accessibles
+        // Vérifier si les dépendances sont résolues
         const dependenciesResolved = challengeInfo.dependencies.every(dep => 
-            teamProgress[teamName][dep]?.solved || false
+            solvedChallenges.has(dep)
         );
         
-        if (!dependenciesResolved && challengeInfo.dependencies.length > 0) {
-            // Ne pas ajouter les challenges verrouillés pour les équipes
-            return;
-        }
+        // Déterminer si le challenge est verrouillé
+        const locked = challengeInfo.dependencies.length > 0 && !dependenciesResolved;
         
         // Simulation des tentatives (CTFd ne stocke que les résolutions)
         const attempts = solved ? Math.floor(Math.random() * 3) + 1 : 0;
@@ -2363,7 +2388,7 @@ function generateUserProgressFromSubmissions(userSolves) {
         teamProgress[teamName][challengeId] = {
             solved: solved,
             attempted: solved, // Nous n'avons que les résolutions dans CTFd
-            locked: false,
+            locked: locked,
             timeSpent: timeSpent,
             attempts: attempts,
             points: solved ? challengeInfo.points : 0,
@@ -2496,10 +2521,17 @@ async function initializeInterface() {
         }
     }
     
-    // S'assurer que selectedTeams est vide après reconnexion
-    if (selectedTeams.length > 0) {
-        debugLog('⚠️ Réinitialisation des équipes sélectionnées après reconnexion');
+    // S'assurer que selectedTeams est vide après reconnexion SEULEMENT pour les admins
+    // Les utilisateurs non-admin doivent garder leur équipe sélectionnée
+    if (selectedTeams.length > 0 && userPermissions.canViewAllTeams) {
+        debugLog('⚠️ Réinitialisation des équipes sélectionnées après reconnexion (mode admin)');
         setSelectedTeams([]);
+    } else if (!userPermissions.canViewAllTeams && selectedTeams.length === 0) {
+        // Pour les utilisateurs non-admin, s'assurer que leur équipe est sélectionnée
+        debugLog('🔄 Sélection automatique de l\'équipe pour l\'utilisateur non-admin');
+        if (currentUser.teamName) {
+            setSelectedTeams([currentUser.teamName]);
+        }
     }
     
     generateTeamFilters();
@@ -2522,6 +2554,18 @@ async function initializeInterface() {
         if (teams.length > 0 && selectedTeams.length === 0 && userPermissions.isAdmin) {
             debugLog('🔄 Aucune équipe sélectionnée, affichage de la vue d\'ensemble');
         }
+        
+        // Pour les utilisateurs non-admin, forcer l'affichage de leur progression
+        if (!userPermissions.isAdmin && currentUser.teamName && selectedTeams.includes(currentUser.teamName)) {
+            debugLog('🎨 Forçage de l\'affichage des couleurs pour utilisateur non-admin');
+            updateChallengesDisplay();
+            debugLog('🎯 Affichage automatique de la progression pour l\'utilisateur:', currentUser.teamName);
+            // Forcer la mise à jour des challenges avec la progression
+            generateChallengeMap();
+            if (d3SystemReady && window.renderD3Challenges) {
+                window.renderD3Challenges();
+            }
+        }
     }, 100);
 }
 
@@ -2530,7 +2574,7 @@ function generateTeamFilters(searchTerm = '') {
     
     const container = document.getElementById('team-filters');
     
-    // Ajouter barre de recherche si pas déjà présente
+    // Ajouter barre de recherche et filtres si pas déjà présents
     let searchBar = document.getElementById('team-search-container');
     if (!searchBar) {
         searchBar = document.createElement('div');
@@ -2541,14 +2585,68 @@ function generateTeamFilters(searchTerm = '') {
                    placeholder="🔍 Rechercher une équipe..." 
                    style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;"
                    oninput="searchTeams(this.value)">
+            ${userPermissions.isAdmin ? `
+            <div style="margin-bottom: 10px; display: flex; gap: 5px; flex-wrap: wrap;">
+                <button 
+                    id="filter-active"
+                    onclick="toggleTeamStatusFilter('active')"
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.active ? '#10b981' : '#f3f4f6'}; color: ${teamStatusFilters.active ? 'white' : '#6b7280'};">
+                    ✅ Active
+                </button>
+                <button 
+                    id="filter-hidden"
+                    onclick="toggleTeamStatusFilter('hidden')"
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.hidden ? '#8b5cf6' : '#f3f4f6'}; color: ${teamStatusFilters.hidden ? 'white' : '#6b7280'};">
+                    👻 Cachées
+                </button>
+                <button 
+                    id="filter-banned"
+                    onclick="toggleTeamStatusFilter('banned')"
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.banned ? '#ef4444' : '#f3f4f6'}; color: ${teamStatusFilters.banned ? 'white' : '#6b7280'};">
+                    🚫 Bannies
+                </button>
+                <div style="flex: 1;"></div>
+                <button 
+                    onclick="selectAllVisibleTeams()"
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #10b981; border-radius: 4px; cursor: pointer; background: white; color: #10b981;">
+                    ✓ Tout
+                </button>
+                <button 
+                    onclick="deselectAllVisibleTeams()"
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #ef4444; border-radius: 4px; cursor: pointer; background: white; color: #ef4444;">
+                    ✗ Aucun
+                </button>
+            </div>
+            ` : ''}
         `;
         container.parentElement.insertBefore(searchBar, container);
     }
     
-    // Filtrer les équipes selon la recherche
-    let filteredTeams = teams.filter(team => 
-        team.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    // Filtrer les équipes selon la recherche et le statut
+    let filteredTeams = teams.filter(team => {
+        // Filtre de recherche
+        if (!team.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+            return false;
+        }
+        
+        // Filtres de statut (seulement pour les admins)
+        if (userPermissions.isAdmin) {
+            // Si l'équipe est cachée et qu'on ne veut pas voir les cachées
+            if (team.hidden && !teamStatusFilters.hidden) {
+                return false;
+            }
+            // Si l'équipe est bannie et qu'on ne veut pas voir les bannies
+            if (team.banned && !teamStatusFilters.banned) {
+                return false;
+            }
+            // Si l'équipe est active (ni cachée ni bannie) et qu'on ne veut pas voir les actives
+            if (!team.hidden && !team.banned && !teamStatusFilters.active) {
+                return false;
+            }
+        }
+        
+        return true;
+    });
     
     // Appliquer le filtre "showOnlySelected" si actif
     if (showOnlySelected) {
@@ -2621,6 +2719,113 @@ function searchTeams(searchTerm) {
     generateTeamFilters(searchTerm);
 }
 
+// Fonction pour basculer les filtres de statut d'équipe
+function toggleTeamStatusFilter(status) {
+    teamStatusFilters[status] = !teamStatusFilters[status];
+    
+    // Mettre à jour l'apparence du bouton
+    const button = document.getElementById(`filter-${status}`);
+    if (button) {
+        const isActive = teamStatusFilters[status];
+        let bgColor, textColor;
+        
+        switch(status) {
+            case 'active':
+                bgColor = isActive ? '#10b981' : '#f3f4f6';
+                textColor = isActive ? 'white' : '#6b7280';
+                break;
+            case 'hidden':
+                bgColor = isActive ? '#8b5cf6' : '#f3f4f6';
+                textColor = isActive ? 'white' : '#6b7280';
+                break;
+            case 'banned':
+                bgColor = isActive ? '#ef4444' : '#f3f4f6';
+                textColor = isActive ? 'white' : '#6b7280';
+                break;
+        }
+        
+        button.style.background = bgColor;
+        button.style.color = textColor;
+    }
+    
+    // Sauvegarder l'état des filtres
+    localStorage.setItem('teamStatusFilters', JSON.stringify(teamStatusFilters));
+    
+    // Régénérer la liste filtrée
+    const searchTerm = document.getElementById('team-search')?.value || '';
+    generateTeamFilters(searchTerm);
+}
+
+// Fonction pour sélectionner toutes les équipes visibles (filtrées)
+function selectAllVisibleTeams() {
+    const searchTerm = document.getElementById('team-search')?.value || '';
+    
+    // Obtenir les équipes filtrées
+    const filteredTeams = teams.filter(team => {
+        // Filtre de recherche
+        if (!team.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+            return false;
+        }
+        
+        // Filtres de statut (seulement pour les admins)
+        if (userPermissions.isAdmin) {
+            if (team.hidden && !teamStatusFilters.hidden) return false;
+            if (team.banned && !teamStatusFilters.banned) return false;
+            if (!team.hidden && !team.banned && !teamStatusFilters.active) return false;
+        }
+        
+        return true;
+    });
+    
+    // Ajouter toutes les équipes filtrées à la sélection
+    filteredTeams.forEach(team => {
+        if (!selectedTeams.includes(team.name)) {
+            selectedTeams.push(team.name);
+            
+            // Charger les données si nécessaire
+            if (!teamProgress[team.name] && !loadingTeams.has(team.name)) {
+                loadTeamDataLazy(team.name);
+            }
+        }
+    });
+    
+    // Sauvegarder et mettre à jour
+    setSelectedTeams(selectedTeams);
+    generateTeamFilters(searchTerm);
+    updateChallengesDisplay();
+}
+
+// Fonction pour désélectionner toutes les équipes visibles (filtrées)
+function deselectAllVisibleTeams() {
+    const searchTerm = document.getElementById('team-search')?.value || '';
+    
+    // Obtenir les équipes filtrées
+    const filteredTeams = teams.filter(team => {
+        // Filtre de recherche
+        if (!team.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+            return false;
+        }
+        
+        // Filtres de statut (seulement pour les admins)
+        if (userPermissions.isAdmin) {
+            if (team.hidden && !teamStatusFilters.hidden) return false;
+            if (team.banned && !teamStatusFilters.banned) return false;
+            if (!team.hidden && !team.banned && !teamStatusFilters.active) return false;
+        }
+        
+        return true;
+    });
+    
+    // Retirer toutes les équipes filtrées de la sélection
+    const filteredNames = filteredTeams.map(t => t.name);
+    const newSelectedTeams = selectedTeams.filter(name => !filteredNames.includes(name));
+    
+    // Sauvegarder et mettre à jour
+    setSelectedTeams(newSelectedTeams);
+    generateTeamFilters(searchTerm);
+    updateChallengesDisplay();
+}
+
 // Fonction de tri des équipes
 function sortTeamsBy(mode) {
     if (mode === 'selected') {
@@ -2672,6 +2877,7 @@ async function toggleTeam(teamName, checkbox) {
             }
             
             updateVisualization();
+            updateChallengesDisplay();
             debugLog(`Team ${teamName} added to view`);
         } catch (error) {
             // Remove from selection if loading failed
@@ -2683,6 +2889,7 @@ async function toggleTeam(teamName, checkbox) {
         // Remove team from selection
         setSelectedTeams(selectedTeams.filter(t => t !== teamName));
         updateVisualization();
+        updateChallengesDisplay();
         debugLog(`Team ${teamName} removed from view`);
     }
 }
@@ -4656,5 +4863,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Initialize drag & drop system
     initializeDragAndDrop();
+    
+    // Charger les filtres d'équipes sauvegardés
+    const savedFilters = localStorage.getItem('teamStatusFilters');
+    if (savedFilters) {
+        try {
+            teamStatusFilters = JSON.parse(savedFilters);
+        } catch (e) {
+            console.error('Erreur chargement filtres:', e);
+        }
+    }
     
 }); // End of initialization
