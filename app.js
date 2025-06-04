@@ -9,7 +9,12 @@ let selectedTeams = [];
 window.selectedTeams = [];
 let currentViewMode = 'overview';
 let isConnected = false;
-let userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
+let userPermissions = { 
+    canViewAllTeams: false,      // Voir la progression de toutes les équipes (admin uniquement)
+    canManageTeams: false,       // Gérer/sélectionner les équipes (admin + joueurs avec accès)
+    canViewFutureChalls: false, 
+    isAdmin: false 
+};
 let teamStatusFilters = { active: true, hidden: true, banned: true }; // Filtres pour les statuts d'équipes
 
 // Configuration de debug
@@ -145,15 +150,41 @@ function calculateChallengeHeatmap() {
                 if (unlockTime) {
                     // Calculate time from unlock to solve
                     const timeDiff = solveDate - unlockTime;
-                    solveTimes.push(timeDiff);
+                    // Protection contre les temps négatifs (peut arriver si les données sont incohérentes)
+                    if (timeDiff > 0) {
+                        solveTimes.push(timeDiff);
+                    } else {
+                        debugLog(`⚠️ Temps négatif détecté: ${teamName} - ${challengeId} (${timeDiff}ms)`);
+                        // Utiliser un temps minimal de 5 minutes
+                        solveTimes.push(300000); // 5 minutes
+                    }
                 } else {
-                    // No dependencies, use time from first solve
+                    // No dependencies, use time from first solve or previous solve
                     const firstSolve = findFirstSolveForTeam(teamName);
                     if (firstSolve) {
                         const firstSolveDate = new Date(firstSolve.date);
                         if (!isNaN(firstSolveDate.getTime())) {
                             const timeDiff = solveDate - firstSolveDate;
-                            solveTimes.push(timeDiff);
+                            // Protection contre les temps négatifs
+                            if (timeDiff > 0) {
+                                solveTimes.push(timeDiff);
+                            } else {
+                                // Si temps négatif, utiliser le temps depuis le solve précédent
+                                const prevSolve = findPreviousSolveForTeam(teamName, challengeId, solveDate);
+                                if (prevSolve) {
+                                    const prevDate = new Date(prevSolve.date);
+                                    const prevDiff = solveDate - prevDate;
+                                    if (prevDiff > 0) {
+                                        solveTimes.push(prevDiff);
+                                    } else {
+                                        // Fallback: 30 minutes
+                                        solveTimes.push(1800000);
+                                    }
+                                } else {
+                                    // Fallback: 30 minutes pour le premier challenge
+                                    solveTimes.push(1800000);
+                                }
+                            }
                         }
                     } else {
                         // Fallback: use 1 hour as default time
@@ -895,6 +926,12 @@ function truncateText(text, maxLength) {
 
 // Format détaillé pour la modale
 function formatTimeDiffDetailed(ms) {
+    // Protection contre les temps négatifs
+    if (ms < 0) {
+        debugLog(`⚠️ Temps négatif dans formatTimeDiffDetailed: ${ms}ms`);
+        return "< 1m"; // Afficher un temps minimal
+    }
+    
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);
@@ -1619,43 +1656,108 @@ function loadTeamsList() {
     }
 }
 
+// Fonction pour valider la connectivité CTFd
+async function validateCTFdConnectivity(url) {
+    try {
+        showLoginLoader('Vérification de la connectivité CTFd...');
+        
+        // Normaliser l'URL
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
+        }
+        
+        // Essayer de contacter l'endpoint de base
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(`${url}/api/v1/config`, {
+            method: 'GET',
+            signal: controller.signal,
+            mode: 'cors'
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+            const data = await response.json();
+            debugLog('✅ CTFd accessible:', data);
+            return { success: true, message: 'CTFd accessible' };
+        } else {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+    } catch (error) {
+        debugLog('❌ CTFd non accessible:', error);
+        
+        if (error.name === 'AbortError') {
+            return { success: false, message: 'Timeout - CTFd non accessible' };
+        } else if (error.message.includes('CORS')) {
+            return { success: false, message: 'CORS_POLICY_ERROR' };
+        } else {
+            return { success: false, message: `Erreur de connectivité: ${error.message}` };
+        }
+    }
+}
+
 async function connectToAPI() {
     const ctfdUrl = document.getElementById('ctfd-url').value.trim();
     const token = document.getElementById('api-token').value.trim();
     
-    // Afficher le loader
-    showLoginLoader('Connexion en cours...');
-    
+    // Validation des champs
     if (!ctfdUrl) {
-        debugWarn('Veuillez saisir l\'URL CTFd');
-        hideLoginLoader();
+        showError('Veuillez saisir l\'URL CTFd');
         return;
     }
 
     if (!token) {
-        debugWarn('Veuillez saisir votre token API CTFd');
-        hideLoginLoader();
+        showError('Veuillez saisir votre token API CTFd');
         return;
+    }
+
+    // Normaliser l'URL
+    let normalizedUrl = ctfdUrl;
+    if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+        normalizedUrl = 'https://' + normalizedUrl;
+    }
+    
+    // Mettre à jour le champ avec l'URL normalisée
+    document.getElementById('ctfd-url').value = normalizedUrl;
+    
+    // Vérifier la connectivité CTFd d'abord (optionnel en mode proxy)
+    const isProxyMode = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000';
+    
+    if (!isProxyMode) {
+        const connectivity = await validateCTFdConnectivity(normalizedUrl);
+        if (!connectivity.success) {
+            hideLoginLoader();
+            if (connectivity.message === 'CORS_POLICY_ERROR') {
+                showCORSError();
+            } else {
+                showError(`Impossible d'accéder à CTFd: ${connectivity.message}`);
+                showCORSInstructions();
+            }
+            return;
+        }
     }
 
     updateAPIStatus('loading', 'Vérification du token...');
     
     // Si on utilise le proxy local, informer de la nouvelle URL
-    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
+    if (isProxyMode) {
         try {
             await fetch('/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ctfdUrl: ctfdUrl })
+                body: JSON.stringify({ ctfdUrl: normalizedUrl })
             });
-            debugLog('URL proxy mise à jour:', ctfdUrl);
+            debugLog('📡 URL proxy mise à jour:', normalizedUrl);
         } catch (configError) {
-            debugWarn('Impossible de mettre à jour l\'URL du proxy:', configError);
+            debugWarn('⚠️ Impossible de mettre à jour l\'URL du proxy:', configError);
         }
     }
     
     try {
-        await authenticateWithCTFd(ctfdUrl, token);
+        await authenticateWithCTFd(normalizedUrl, token);
     } catch (error) {
         updateAPIStatus('disconnected', 'Erreur de connexion');
         hideLoginLoader();
@@ -1669,6 +1771,10 @@ async function connectToAPI() {
 }
 
 async function authenticateWithCTFd(ctfdUrl, token) {
+    // Réinitialiser les protections contre la duplication
+    buildChallengeMapInProgress = false;
+    buildChallengeMapCompleted = false;
+    
     // Appel API pour vérifier le token et récupérer les permissions
     currentUser.ctfdUrl = ctfdUrl;
     currentUser.token = token;
@@ -1682,48 +1788,78 @@ async function authenticateWithCTFd(ctfdUrl, token) {
         
         // 2. Tester les permissions en tentant d'accéder aux endpoints admin
         showLoginLoader('Vérification des permissions...');
-        try {
-            await callCTFdAPI('/api/v1/users', 'GET');
-            // Si cet appel réussit, l'utilisateur a des droits admin
-            userPermissions.isAdmin = true;
-            userPermissions.canViewAllTeams = true;
-            userPermissions.canViewFutureChalls = true;
-            updateAPIStatus('connected', `Admin: ${currentUser.name}`);
-        } catch (adminError) {
-            // L'utilisateur n'a pas les droits admin
-            userPermissions.isAdmin = false;
-            userPermissions.canViewAllTeams = false;
-            userPermissions.canViewFutureChalls = false;
-            updateAPIStatus('connected', `Équipe: ${currentUser.name}`);
+        let isAdmin = false;
+        
+        // Essayer plusieurs endpoints admin pour la compatibilité
+        const adminEndpoints = [
+            '/api/v1/admin/statistics',
+            '/api/v1/users?view=admin',  // Endpoint plus standard
+            '/api/v1/teams?view=admin'
+        ];
+        
+        for (const endpoint of adminEndpoints) {
+            try {
+                await callCTFdAPI(endpoint, 'GET');
+                // Si on arrive ici sans erreur, c'est un admin
+                isAdmin = true;
+                debugLog(`🔑 Permissions admin détectées via ${endpoint}`);
+                break;
+            } catch (error) {
+                debugLog(`❌ Pas d'accès admin à ${endpoint}`);
+                continue;
+            }
         }
         
-        // 3. Vérifier l'état du CTF
-        try {
-            const configResponse = await callCTFdAPI('/api/v1/configs');
-            debugLog('Configuration CTFd:', configResponse.data);
-            
-            // Vérifier si le CTF est en mode setup ou fini
-            const ctfName = configResponse.data?.ctf_name || 'CTF';
-            const startTime = configResponse.data?.start || null;
-            const endTime = configResponse.data?.end || null;
-            
-            if (startTime) {
-                const start = new Date(startTime * 1000);
-                const now = new Date();
-                if (now < start) {
-                    showError(`Le CTF "${ctfName}" n'a pas encore commencé. Début : ${start.toLocaleString()}`);
+        if (isAdmin) {
+            userPermissions.isAdmin = true;
+            userPermissions.canViewAllTeams = true;
+            userPermissions.canManageTeams = true;
+            userPermissions.canViewFutureChalls = true;
+            updateAPIStatus('connected', `Admin: ${currentUser.name}`);
+        } else {
+            // L'utilisateur n'a pas les droits admin
+            debugLog('👤 Mode joueur détecté - aucun accès admin');
+            userPermissions.isAdmin = false;
+            userPermissions.canViewAllTeams = false; // Joueur voit SA progression, pas multi-équipes
+            userPermissions.canManageTeams = true;   // Mais peut gérer la liste des équipes
+            userPermissions.canViewFutureChalls = false;
+            updateAPIStatus('connected', `Joueur: ${currentUser.name}`);
+        }
+        
+        // 3. Vérifier l'état du CTF (seulement pour les admins)
+        let ctfName = 'CTF';
+        let startTime = null;
+        
+        if (userPermissions.isAdmin) {
+            try {
+                const configResponse = await callCTFdAPI('/api/v1/configs');
+                debugLog('Configuration CTFd:', configResponse.data);
+                
+                // Vérifier si le CTF est en mode setup ou fini
+                ctfName = configResponse.data?.ctf_name || 'CTF';
+                startTime = configResponse.data?.start || null;
+                const endTime = configResponse.data?.end || null;
+                
+                if (startTime) {
+                    const start = new Date(startTime * 1000);
+                    const now = new Date();
+                    if (now < start) {
+                        showError(`Le CTF "${ctfName}" n'a pas encore commencé. Début : ${start.toLocaleString()}`);
+                    }
                 }
-            }
-            
-            if (endTime) {
-                const end = new Date(endTime * 1000);
-                const now = new Date();
-                if (now > end) {
-                    showError(`Le CTF "${ctfName}" est terminé depuis le ${end.toLocaleString()}`);
+                
+                if (endTime) {
+                    const end = new Date(endTime * 1000);
+                    const now = new Date();
+                    if (now > end) {
+                        showError(`Le CTF "${ctfName}" est terminé depuis le ${end.toLocaleString()}`);
+                    }
                 }
+            } catch (e) {
+                debugLog('Impossible de récupérer la config CTFd (admin requis):', e);
             }
-        } catch (e) {
-            debugLog('Impossible de récupérer la config CTFd:', e);
+        } else {
+            debugLog('💡 Mode joueur: Pas d\'accès aux configurations CTFd (normal)');
         }
         
         // 4. Charger les données selon les permissions
@@ -1846,11 +1982,104 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
 }
 
 async function loadDataBasedOnPermissions() {
-    if (userPermissions.isAdmin) {
-        await loadAdminData();
-    } else {
-        await loadUserData();
+    try {
+        debugLog(`🔍 === DÉBUT CHARGEMENT DONNÉES ===`);
+        debugLog(`Mode de chargement des données: ${userPermissions.isAdmin ? 'ADMIN' : 'JOUEUR'}`);
+        debugLog(`Permissions détectées:`, userPermissions);
+        debugLog(`ChallengeMap actuel avant chargement: ${Object.keys(challengeMap).length} challenges`);
+        
+        if (userPermissions.isAdmin) {
+            debugLog('📊 === DÉBUT CHARGEMENT ADMIN ===');
+            await loadAdminData();
+            debugLog('📊 === FIN CHARGEMENT ADMIN ===');
+        } else {
+            debugLog('👤 === DÉBUT CHARGEMENT JOUEUR ===');
+            await loadUserData();
+            debugLog('👤 === FIN CHARGEMENT JOUEUR ===');
+        }
+        
+        debugLog(`ChallengeMap final après chargement: ${Object.keys(challengeMap).length} challenges`);
+        debugLog(`🔍 === FIN CHARGEMENT DONNÉES ===`);
+    } catch (error) {
+        console.error('❌ Erreur lors du chargement des données:', error);
+        
+        // Fallback: Au minimum charger les challenges visibles (seulement si aucun challenge n'est chargé)
+        if (Object.keys(challengeMap).length === 0) {
+            try {
+                debugLog('🔄 Tentative de chargement minimal des challenges...');
+                await loadMinimalChallenges();
+            } catch (fallbackError) {
+                console.error('❌ Échec du chargement minimal:', fallbackError);
+                throw error; // Rethrow l'erreur originale
+            }
+        } else {
+            debugLog('⚠️ Des challenges sont déjà chargés, pas de fallback nécessaire');
+        }
     }
+}
+
+// Fonction de fallback pour charger au minimum les challenges
+async function loadMinimalChallenges() {
+    try {
+        const challengesResponse = await callCTFdAPI('/api/v1/challenges');
+        
+        if (challengesResponse && challengesResponse.data) {
+            challengeMap = {};
+            
+            challengesResponse.data.forEach(challenge => {
+                challengeMap[String(challenge.id)] = {
+                    id: String(challenge.id),
+                    name: challenge.name || 'Challenge sans nom',
+                    category: challenge.category || 'General',
+                    points: challenge.value || 0,
+                    dependencies: [], // Pas de dépendances en mode minimal
+                    position: null
+                };
+            });
+            
+            debugLog(`✅ Chargement minimal: ${Object.keys(challengeMap).length} challenges`);
+            
+            // Appliquer un positionnement simple
+            applyBasicPositioning();
+            
+            // Créer une équipe fictive pour l'utilisateur courant
+            teams = [{
+                id: 'user',
+                name: currentUser.name || 'Mon équipe',
+                color: '#3b82f6'
+            }];
+            
+            window.teams = teams;
+            selectedTeams = [teams[0].name];
+            window.selectedTeams = selectedTeams;
+            
+            debugLog('✅ Mode minimal activé - Challenges visibles sans progression');
+        }
+    } catch (error) {
+        console.error('❌ Échec du chargement minimal des challenges:', error);
+        throw error;
+    }
+}
+
+// Fonction pour appliquer un positionnement simple en grille
+function applyBasicPositioning() {
+    const challengeIds = Object.keys(challengeMap);
+    const cols = Math.ceil(Math.sqrt(challengeIds.length));
+    const spacing = 200;
+    const startX = 100;
+    const startY = 100;
+    
+    challengeIds.forEach((id, index) => {
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        
+        challengeMap[id].position = {
+            x: startX + col * spacing,
+            y: startY + row * spacing
+        };
+    });
+    
+    debugLog(`✅ Positionnement de base appliqué: ${challengeIds.length} challenges en grille ${cols}x${Math.ceil(challengeIds.length / cols)}`);
 }
 
 async function preloadAllTeams() {
@@ -1988,8 +2217,20 @@ async function loadAdminData() {
         // Précharger toutes les équipes
         await preloadAllTeams();
         
-        // Start with no teams selected for lazy loading
-        setSelectedTeams([]);
+        // Pour les admins, sélectionner automatiquement les 10 premières équipes
+        // (ou moins si moins d'équipes disponibles)
+        const initialTeams = teams.slice(0, 10).map(t => t.name);
+        setSelectedTeams(initialTeams);
+        debugLog(`🎯 Admin: Auto-sélection de ${initialTeams.length} équipes initiales`);
+        
+        // Charger la progression de ces équipes
+        for (const teamName of initialTeams) {
+            try {
+                await loadTeamProgress(teamName);
+            } catch (error) {
+                debugLog(`⚠️ Impossible de charger la progression de ${teamName}:`, error);
+            }
+        }
         
         // Charger TOUS les challenges (y compris cachés) pour les admins avec view=admin
         try {
@@ -2022,6 +2263,8 @@ async function loadAdminData() {
         
         // Créer challengeMap à partir des vraies données CTFd
         await buildChallengeMapFromCTFd(challenges);
+        buildChallengeMapInProgress = false;
+        buildChallengeMapCompleted = true;
         
         // Ne plus charger les solves au démarrage - ils seront chargés à la demande
         debugLog('✅ Challenges et équipes chargés. Les solves seront chargés à la demande.');
@@ -2052,8 +2295,11 @@ async function loadUserData() {
         // Charger seulement les données accessibles à cet utilisateur
         let userTeamResponse, teamId;
         try {
+            debugLog(`🔍 Récupération du profil utilisateur ID: ${currentUser.id}`);
             userTeamResponse = await callCTFdAPI(`/api/v1/users/${currentUser.id}`);
             teamId = userTeamResponse.data.team_id;
+            debugLog(`👥 Team ID trouvé dans le profil: ${teamId}`);
+            debugLog(`📋 Données du profil utilisateur:`, userTeamResponse.data);
         } catch (profileError) {
             console.error('Erreur lors de l\'accès au profil utilisateur:', profileError);
             if (profileError.message.includes('403') || profileError.message.includes('401')) {
@@ -2067,13 +2313,30 @@ async function loadUserData() {
             // Mode équipe confirmé - l'utilisateur a une équipe
             try {
                 const teamResponse = await callCTFdAPI(`/api/v1/teams/${teamId}`);
-                teams = [{
-                    id: teamId,
-                    name: teamResponse.data.name,
-                    color: '#3b82f6'
-                }];
-                setSelectedTeams([teamResponse.data.name]);
                 currentUser.teamName = teamResponse.data.name;
+                
+                // Essayer de charger toutes les équipes visibles (pas juste la sienne)
+                try {
+                    debugLog('🏁 Tentative de chargement de toutes les équipes visibles...');
+                    debugLog(`👥 Équipes avant preloadAllTeams: ${teams.length}`);
+                    await preloadAllTeams();
+                    debugLog(`👥 Équipes après preloadAllTeams: ${teams.length}`);
+                    
+                    // S'assurer que l'équipe du joueur est sélectionnée
+                    if (!selectedTeams.includes(currentUser.teamName)) {
+                        debugLog(`🔄 Sélection de l'équipe du joueur: ${currentUser.teamName}`);
+                        setSelectedTeams([currentUser.teamName]);
+                    }
+                } catch (allTeamsError) {
+                    debugLog('❌ Impossible de charger toutes les équipes, mode équipe unique:', allTeamsError);
+                    // Fallback: juste l'équipe du joueur
+                    teams = [{
+                        id: teamId,
+                        name: teamResponse.data.name,
+                        color: '#3b82f6'
+                    }];
+                    setSelectedTeams([teamResponse.data.name]);
+                }
             } catch (teamError) {
                 debugLog('Erreur accès équipe:', teamError);
                 // Fallback au mode individuel si l'équipe n'est pas accessible
@@ -2134,6 +2397,8 @@ async function loadUserData() {
         
         // Créer challengeMap à partir des vraies données CTFd
         await buildChallengeMapFromCTFd(challenges);
+        buildChallengeMapInProgress = false;
+        buildChallengeMapCompleted = true;
         
         // Charger les soumissions selon le mode (équipe ou individuel)
         let submissions = [];
@@ -2163,19 +2428,31 @@ async function loadUserData() {
         generateUserProgressFromSubmissions(submissions);
         
         // S'assurer que l'équipe de l'utilisateur est bien sélectionnée
+        debugLog(`🔍 Vérification sélection équipe utilisateur:`);
+        debugLog(`  - currentUser.teamName: "${currentUser.teamName}"`);
+        debugLog(`  - selectedTeams: [${selectedTeams.map(t => `"${t}"`).join(', ')}]`);
+        debugLog(`  - L'équipe est-elle incluse? ${selectedTeams.includes(currentUser.teamName)}`);
+        
         if (currentUser.teamName && (!selectedTeams.includes(currentUser.teamName))) {
             debugLog('🔄 Sélection automatique de l\'équipe utilisateur:', currentUser.teamName);
             setSelectedTeams([currentUser.teamName]);
+            debugLog(`  ✅ Équipe sélectionnée. Nouvelles selectedTeams: [${selectedTeams.map(t => `"${t}"`).join(', ')}]`);
+        } else {
+            debugLog('✅ Équipe utilisateur déjà sélectionnée ou pas de teamName');
         }
         
-        // Forcer la mise à jour de l'affichage pour les utilisateurs non-admin
-        debugLog('🎨 Mise à jour de l\'affichage après chargement des données utilisateur');
-        updateVisualization();
+        // La mise à jour de l'affichage sera faite par initializeInterface après l'init D3
+        debugLog('🎨 Données utilisateur chargées, affichage sera mis à jour après init D3');
         
-        // Désactiver les contrôles multi-équipes
-        document.getElementById('teams-section').classList.add('admin-only');
-        document.getElementById('paths-btn').classList.add('disabled');
-        document.getElementById('heatmap-btn').classList.add('disabled');
+        // Garder les contrôles équipes mais désactiver les fonctions admin uniquement
+        const pathsBtn = document.getElementById('paths-btn');
+        const heatmapBtn = document.getElementById('heatmap-btn');
+        
+        // Les fonctions parcours et heatmap nécessitent souvent des données admin
+        if (pathsBtn) pathsBtn.classList.add('disabled');
+        if (heatmapBtn) heatmapBtn.classList.add('disabled');
+        
+        debugLog('✅ Interface joueur configurée - Fonctions admin désactivées, équipes visibles');
         
     } catch (error) {
         console.error('Erreur lors du chargement des données utilisateur:', error);
@@ -2398,22 +2675,17 @@ async function initializeInterface() {
             debugLog('🔄 Aucune équipe sélectionnée, affichage de la vue d\'ensemble');
         }
         
-        // Pour les utilisateurs non-admin, forcer l'affichage de leur progression
+        // Pour les utilisateurs non-admin, la première visualisation déjà faite suffit
+        // Plus besoin de double appel avec le nouveau système D3
         if (!userPermissions.isAdmin && currentUser.teamName && selectedTeams.includes(currentUser.teamName)) {
-            debugLog('🎨 Forçage de l\'affichage des couleurs pour utilisateur non-admin');
-            updateVisualization();
             debugLog('🎯 Affichage automatique de la progression pour l\'utilisateur:', currentUser.teamName);
-            // Forcer la mise à jour des challenges avec la progression
-            generateChallengeMap();
-            if (d3SystemReady && window.renderD3Challenges) {
-                window.renderD3Challenges();
-            }
+            // La progression est déjà prise en compte par updateVisualization() au-dessus
         }
     }, 100);
 }
 
 function generateTeamFilters(searchTerm = '') {
-    if (!userPermissions.canViewAllTeams) return;
+    if (!userPermissions.canManageTeams) return;
     
     const container = document.getElementById('team-filters');
     
@@ -2836,7 +3108,7 @@ async function toggleTeam(teamName, checkbox) {
 }
 
 async function selectAllTeams() {
-    if (!userPermissions.canViewAllTeams) return;
+    if (!userPermissions.canManageTeams) return;
     
     const checkboxes = document.querySelectorAll('#team-filters input[type="checkbox"]');
     const newSelection = [...selectedTeams];
@@ -2917,6 +3189,21 @@ function setViewMode(mode) {
         }
         // Show heatmap legend
         document.getElementById('heatmap-legend').classList.add('visible');
+        
+        // Force D3 re-render for heatmap colors
+        if (d3SystemReady && window.renderD3Challenges) {
+            debugLog('🔥 Forçage du re-rendu D3 pour la heatmap');
+            
+            // Debug heatmap data
+            const heatmapColors = window.getChallengeHeatmapColors();
+            debugLog('🔥 Données heatmap calculées:', {
+                challengeCount: Object.keys(heatmapColors).length,
+                sampleColors: Object.entries(heatmapColors).slice(0, 5)
+            });
+            
+            window.lastDataHash = null; // Reset hash to force re-render
+            setTimeout(() => window.renderD3Challenges(), 50);
+        }
     } else {
         parcoursMode = false;
         window.parcoursMode = false;
@@ -2935,6 +3222,10 @@ function setViewMode(mode) {
         document.getElementById('heatmap-legend').classList.remove('visible');
     }
     
+    // Force re-render with updateVisualization but with hash reset for D3
+    if (d3SystemReady) {
+        window.lastDataHash = null; // Reset hash to force D3 re-render
+    }
     updateVisualization();
 }
 
@@ -3103,9 +3394,15 @@ function generateChallengeMap() {
 }
 
 function drawDependencies() {
+    // Skip if D3 system is active
+    if (d3SystemReady) {
+        debugLog('📊 D3 system active, skipping legacy dependency drawing');
+        return;
+    }
+    
     const svg = document.getElementById('dependencies-svg');
     if (!svg) {
-        console.error('Dependencies SVG element not found');
+        debugLog('⚠️ Dependencies SVG element not found (normal if using D3)');
         return;
     }
     
@@ -3374,31 +3671,57 @@ function hideTooltip() {
 // ===== FONCTIONS DE STATISTIQUES =====
 
 
+// Protection contre les appels trop fréquents à updateVisualization
+let updateVisualizationInProgress = false;
+let lastUpdateVisualizationCall = 0;
+
 function updateVisualization() {
+    console.log('📊 === updateVisualization appelé ===');
+    console.log('🔍 Appelé depuis:', new Error().stack.split('\n')[2]);
+    
+    const now = Date.now();
+    
+    // Protection contre les appels trop rapprochés (moins de 50ms)
+    if (updateVisualizationInProgress) {
+        console.log('⚠️ updateVisualization déjà en cours, ignorant cet appel');
+        return;
+    }
+    
+    if (now - lastUpdateVisualizationCall < 50) {
+        console.log('⚠️ updateVisualization appelé trop rapidement, ignorant cet appel');
+        return;
+    }
+    
+    updateVisualizationInProgress = true;
+    lastUpdateVisualizationCall = now;
+    
     generateChallengeMap();
     
-    // Use D3 rendering if available and ready, fallback to legacy system
-    if (d3SystemReady && window.renderD3Challenges && typeof isD3Ready === 'function' && isD3Ready()) {
-        try {
+    try {
+        // Use D3 rendering if available and ready, fallback to legacy system
+        if (d3SystemReady && window.renderD3Challenges && typeof isD3Ready === 'function' && isD3Ready()) {
+            console.log('✅ Using D3 rendering system');
             renderD3Challenges();
             // Update team paths if parcours mode is active
             if (parcoursMode && window.updateTeamPaths) {
                 setTimeout(() => window.updateTeamPaths(), 100); // Small delay to ensure nodes are positioned
             }
-        } catch (error) {
-            console.error('❌ D3 rendering failed:', error);
-            debugLog('🔄 Falling back to legacy rendering');
+            // Don't call legacy functions when D3 is working
+        } else {
+            console.log('⚠️ D3 not ready, using legacy rendering');
             drawDependencies();
             updateTransform(); // Ensure SVG follows challenge container
         }
-    } else {
-        drawDependencies();
-        updateTransform(); // Ensure SVG follows challenge container
+        
+        generateTeamFilters();
+        updateGlobalStats();
+        updateLiveStats();
+    } finally {
+        // Reset flag after completion
+        setTimeout(() => {
+            updateVisualizationInProgress = false;
+        }, 25);
     }
-    
-    generateTeamFilters();
-    updateGlobalStats();
-    updateLiveStats();
 }
 
 function updateGlobalStats() {
@@ -3598,7 +3921,12 @@ function logout() {
     challenges = {}; // Réinitialiser les challenges
     challengeMap = {}; // Réinitialiser la map des challenges
     setSelectedTeams([]);
-    userPermissions = { canViewAllTeams: false, canViewFutureChalls: false, isAdmin: false };
+    userPermissions = { 
+        canViewAllTeams: false, 
+        canManageTeams: false, 
+        canViewFutureChalls: false, 
+        isAdmin: false 
+    };
     
     // Vider tous les caches
     teamDataCache = {};
@@ -3809,16 +4137,45 @@ function calculateChallengeLevel(challengeId, challengeMap, levels = {}, visited
     return calculatedLevel;
 }
 
+// Variable pour éviter les appels multiples
+let buildChallengeMapInProgress = false;
+let buildChallengeMapCompleted = false;
+
 async function buildChallengeMapFromCTFd(ctfdChallenges) {
-    // Reconstruire challengeMap à partir des données CTFd
-    
-    if (!ctfdChallenges || ctfdChallenges.length === 0) {
-        debugWarn('Aucun challenge reçu de CTFd, utilisation des données de démo');
+    // Protection contre les appels multiples
+    if (buildChallengeMapInProgress) {
+        debugLog('⚠️ buildChallengeMapFromCTFd déjà en cours, ignorant cet appel');
         return;
     }
     
-    debugLog('=== CONSTRUCTION DE LA CARTE DES CHALLENGES ===');
-    debugLog(`Nombre de challenges reçus: ${ctfdChallenges.length}`);
+    if (buildChallengeMapCompleted && Object.keys(challengeMap).length > 0) {
+        debugLog('⚠️ buildChallengeMapFromCTFd déjà terminé, ignorant cet appel');
+        return;
+    }
+    
+    buildChallengeMapInProgress = true;
+    
+    // Timeout de sécurité après 30 secondes
+    setTimeout(() => {
+        if (buildChallengeMapInProgress) {
+            debugLog('⚠️ Timeout de sécurité - réinitialisation buildChallengeMapInProgress');
+            buildChallengeMapInProgress = false;
+        }
+    }, 30000);
+    
+    try {
+        // Reconstruire challengeMap à partir des données CTFd
+        
+        if (!ctfdChallenges || ctfdChallenges.length === 0) {
+            debugWarn('Aucun challenge reçu de CTFd, utilisation des données de démo');
+            buildChallengeMapInProgress = false;
+            return;
+        }
+        
+        debugLog('=== 🏗️  CONSTRUCTION DE LA CARTE DES CHALLENGES ===');
+        debugLog(`Nombre de challenges reçus: ${ctfdChallenges.length}`);
+        debugLog(`Mode actuel: ${userPermissions.isAdmin ? 'ADMIN' : 'JOUEUR'}`);
+        debugLog(`ChallengeMap existant avant construction: ${Object.keys(challengeMap).length} challenges`);
     
     // Si on a des challenges, on remplace le challengeMap par défaut
     challengeMap = {};
@@ -3844,29 +4201,32 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
         };
     });
     
-    // Étape 2: Fetch les requirements pour chaque challenge
-    debugLog('=== 🔍 DETAILED DEPENDENCY FETCHING DEBUG ===');
-    debugLog(`Attempting to fetch dependencies for ${ctfdChallenges.length} challenges...`);
-    debugLog('Current CTFd URL:', currentUser.ctfdUrl);
-    debugLog('Token available:', !!currentUser.token);
+    // Étape 2: Fetch les requirements pour chaque challenge (si admin)
+    let requirementPromises;
     
-    // First, log the structure of a sample challenge to understand available fields
-    if (ctfdChallenges.length > 0) {
-        debugLog('📋 SAMPLE CHALLENGE STRUCTURE:');
-        const sampleChallenge = ctfdChallenges[0];
-        debugLog('Available fields:', Object.keys(sampleChallenge));
-        debugLog('Full sample challenge data:', sampleChallenge);
+    if (userPermissions.isAdmin) {
+        debugLog('=== 🔍 DETAILED DEPENDENCY FETCHING DEBUG (MODE ADMIN) ===');
+        debugLog(`Attempting to fetch dependencies for ${ctfdChallenges.length} challenges...`);
+        debugLog('Current CTFd URL:', currentUser.ctfdUrl);
+        debugLog('Token available:', !!currentUser.token);
         
-        // Check for common requirement field names
-        const possibleRequirementFields = ['requirements', 'prerequisites', 'depends_on', 'dependencies'];
-        possibleRequirementFields.forEach(field => {
-            if (sampleChallenge[field] !== undefined) {
-                debugLog(`🎯 Found potential requirement field '${field}':`, sampleChallenge[field]);
-            }
-        });
-    }
-    
-    const requirementPromises = ctfdChallenges.map(async (challenge) => {
+        // First, log the structure of a sample challenge to understand available fields
+        if (ctfdChallenges.length > 0) {
+            debugLog('📋 SAMPLE CHALLENGE STRUCTURE:');
+            const sampleChallenge = ctfdChallenges[0];
+            debugLog('Available fields:', Object.keys(sampleChallenge));
+            debugLog('Full sample challenge data:', sampleChallenge);
+            
+            // Check for common requirement field names
+            const possibleRequirementFields = ['requirements', 'prerequisites', 'depends_on', 'dependencies'];
+            possibleRequirementFields.forEach(field => {
+                if (sampleChallenge[field] !== undefined) {
+                    debugLog(`🎯 Found potential requirement field '${field}':`, sampleChallenge[field]);
+                }
+            });
+        }
+        
+        requirementPromises = ctfdChallenges.map(async (challenge) => {
         const challengeId = String(challenge.id);
         
         debugLog(`\n📡 FETCHING REQUIREMENTS: ${challenge.name} (ID: ${challenge.id})`);
@@ -3954,6 +4314,15 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
             debugLog(`  ❌ ${challenge.name}: Empty or invalid requirements API response`);
             
         } catch (error) {
+            // Handle permission errors more gracefully for non-admin users
+            if (error.status === 403) {
+                debugLog(`  🔒 ${challenge.name}: Requirements API requires admin permissions (403 Forbidden)`);
+                debugLog(`    💡 Mode joueur: Pas d'accès aux dépendances des challenges (normal)`);
+                // Ne pas considérer comme une erreur grave pour les joueurs
+                challengeMap[challengeId].dependencies = [];
+                return { challengeId, requirements: [], source: 'no-permissions' };
+            }
+            
             console.error(`  💥 ${challenge.name}: API ERROR when fetching requirements:`);
             console.error(`    - Error type: ${error.constructor.name}`);
             console.error(`    - Error message: ${error.message}`);
@@ -4046,13 +4415,30 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
         return { challengeId, requirements: fallbackRequirements, source: 'fallback' };
     });
     
+    } else {
+        // Mode joueur - pas d'accès aux requirements API
+        debugLog('=== 👤 MODE JOUEUR: PAS DE CHARGEMENT DES DÉPENDANCES ===');
+        debugLog('Les dépendances des challenges ne sont pas accessibles en mode joueur');
+        
+        // Créer des promesses vides pour chaque challenge
+        requirementPromises = ctfdChallenges.map(challenge => {
+            const challengeId = String(challenge.id);
+            challengeMap[challengeId].dependencies = []; // Pas de dépendances
+            return Promise.resolve({ 
+                challengeId, 
+                requirements: [], 
+                source: 'player-mode' 
+            });
+        });
+    }
+    
     // Attendre toutes les requêtes de requirements
     debugLog('\n⏳ Waiting for all requirement requests to complete...');
     const allRequirements = await Promise.all(requirementPromises);
     
     // Analyze the results
     debugLog('\n📊 DEPENDENCY FETCHING SUMMARY:');
-    const sourceCounts = { api: 0, 'api-converted': 0, fallback: 0 };
+    const sourceCounts = { api: 0, 'api-converted': 0, fallback: 0, 'player-mode': 0, 'no-permissions': 0 };
     const totalDependencies = allRequirements.reduce((total, req) => {
         sourceCounts[req.source] = (sourceCounts[req.source] || 0) + 1;
         return total + req.requirements.length;
@@ -4405,22 +4791,32 @@ async function buildChallengeMapFromCTFd(ctfdChallenges) {
             currentY += rowsInCategory * rowHeight + 40;
         });
     }
+    
+    } catch (error) {
+        console.error('❌ Erreur dans buildChallengeMapFromCTFd:', error);
+        buildChallengeMapInProgress = false;
+        throw error;
+    } finally {
+        buildChallengeMapInProgress = false;
+        buildChallengeMapCompleted = true;
+        debugLog('🏁 buildChallengeMapFromCTFd terminé');
+    }
 }
 
 function selectAllTeams() {
-    if (!userPermissions.canViewAllTeams) return;
+    if (!userPermissions.canManageTeams) return;
     setSelectedTeams(teams.map(t => t.name));
     updateVisualization();
 }
 
 function deselectAllTeams() {
-    if (!userPermissions.canViewAllTeams) return;
+    if (!userPermissions.canManageTeams) return;
     setSelectedTeams([]);
     updateVisualization();
 }
 
 function selectSingleTeam() {
-    if (!userPermissions.canViewAllTeams) return;
+    if (!userPermissions.canManageTeams) return;
     // Sélectionner seulement la première équipe ou celle avec le meilleur score
     const bestTeam = teams.reduce((best, team) => {
         const teamScore = getTeamSolvedCount(team.name);
@@ -4739,56 +5135,58 @@ function runStartupVerification() {
     }
 }
 
-// Fonction pour charger la config proxy
+// Fonction pour charger la config proxy de façon non-bloquante
 async function loadProxyConfig() {
+    const urlInput = document.getElementById('ctfd-url');
+    
     try {
-        debugLog('🔧 Chargement de la configuration proxy...');
+        debugLog('🔧 Tentative de connexion au proxy local...');
         
-        // Indiquer le chargement dans l'interface
-        const urlInput = document.getElementById('ctfd-url');
-        if (urlInput) {
-            urlInput.placeholder = 'Chargement de la configuration...';
-            urlInput.disabled = true;
-        }
+        // Timeout court pour éviter l'attente
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1000); // 1 seconde max
         
         // Vérifier que le proxy est actif
-        const healthResponse = await fetch('/health');
+        const healthResponse = await fetch('/health', { 
+            signal: controller.signal,
+            cache: 'no-cache'
+        });
+        clearTimeout(timeoutId);
+        
         const healthData = await healthResponse.json();
-        debugLog('Proxy status:', healthData);
+        debugLog('✅ Proxy détecté:', healthData);
         
         // Récupérer la configuration
         const configResponse = await fetch('/config');
         const config = await configResponse.json();
         
-        // Mettre à jour le champ URL
-        if (urlInput && config.ctfdUrl) {
+        // Mettre à jour le champ URL si une URL proxy est configurée
+        if (urlInput && config.ctfdUrl && config.ctfdUrl !== 'https://demo.ctfd.io') {
             urlInput.value = config.ctfdUrl;
-            urlInput.placeholder = 'https://demo.ctfd.io';
-            debugLog('URL pré-remplie avec CTFD_URL:', config.ctfdUrl);
+            debugLog('📡 URL pré-remplie depuis proxy:', config.ctfdUrl);
         }
         
         // Afficher un indicateur que le proxy est actif
         updateAPIStatus('proxy', `Proxy actif: ${config.ctfdUrl}`);
         
     } catch (error) {
-        debugLog('Proxy non accessible:', error);
+        // Ne pas traiter comme une erreur - mode direct disponible
+        debugLog('💡 Proxy local non disponible, utilisation du mode direct');
         
-        // Restaurer le champ URL
-        const urlInput = document.getElementById('ctfd-url');
-        if (urlInput) {
+        // Assurer que l'URL par défaut est présente
+        if (urlInput && !urlInput.value) {
             urlInput.value = 'https://demo.ctfd.io';
-            urlInput.placeholder = 'https://demo.ctfd.io';
-            urlInput.disabled = false;
         }
         
-        // Afficher un avertissement que le proxy n'est pas actif
-        updateAPIStatus('proxy-down', 'Proxy non démarré - utilisez npm start');
-        showError('Le proxy local n\'est pas démarré. Lancez "npm start" ou utilisez le mode direct avec une extension CORS.');
+        // Pas d'erreur affichée - le mode direct fonctionne très bien
+        updateAPIStatus('disconnected', 'Mode direct - Extension CORS requise');
     } finally {
-        // Réactiver le champ URL
-        const urlInput = document.getElementById('ctfd-url');
+        // Assurer que le champ URL est toujours utilisable
         if (urlInput) {
             urlInput.disabled = false;
+            if (!urlInput.value) {
+                urlInput.value = 'https://demo.ctfd.io';
+            }
         }
     }
 }
@@ -4800,9 +5198,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Wait for all essential DOM elements to be ready
     await waitForEssentialElements();
     
-    // Charger immédiatement la config proxy si en mode local (avant autres initialisations)
+    // Charger la config proxy en arrière-plan si en mode local (non-bloquant)
     if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
-        await loadProxyConfig();
+        // Lancer en arrière-plan sans attendre
+        loadProxyConfig().catch(error => {
+            debugLog('⚠️ Chargement proxy échoué en arrière-plan:', error);
+        });
     }
     
     // D3.js will be initialized after login when container is visible

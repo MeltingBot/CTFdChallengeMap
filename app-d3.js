@@ -264,6 +264,10 @@ function throttle(func, delay) {
  * Convert challenge data to D3 format
  */
 function convertToD3Data(challengeMap, teamProgress = {}) {
+    console.log('🔄 === DÉBUT convertToD3Data ===');
+    console.log(`ChallengeMap: ${Object.keys(challengeMap).length} challenges`);
+    console.log(`TeamProgress: ${Object.keys(teamProgress).length} équipes`);
+    
     const nodes = [];
     const links = [];
     
@@ -301,6 +305,8 @@ function convertToD3Data(challengeMap, teamProgress = {}) {
         });
     });
     
+    console.log(`✅ FIN convertToD3Data: ${nodes.length} nodes, ${links.length} links`);
+    
     return { nodes, links };
 }
 
@@ -336,21 +342,75 @@ function isD3Ready() {
     return true;
 }
 
+// Protection contre les appels multiples avec timeout
+let renderD3InProgress = false;
+let renderD3LastCall = 0;
+let lastDataHash = null;
+window.lastDataHash = null; // Expose globally for forced re-renders
+
 /**
  * Render challenges using D3.js with comprehensive error handling
  */
 function renderD3Challenges() {
+    const now = Date.now();
+    
+    if (renderD3InProgress) {
+        console.log('⚠️ renderD3Challenges déjà en cours, ignorant cet appel');
+        return;
+    }
+    
+    // Protection contre les appels trop rapprochés (moins de 100ms)
+    if (now - renderD3LastCall < 100) {
+        console.log('⚠️ renderD3Challenges appelé trop rapidement, ignorant cet appel');
+        return;
+    }
+    
+    renderD3InProgress = true;
+    renderD3LastCall = now;
+    
+    // Tracer qui appelle cette fonction
+    console.log('🔍 renderD3Challenges appelé depuis:', new Error().stack.split('\n')[2]);
+    console.log('📊 Data state:', {
+        challengeCount: Object.keys(challengeMap).length,
+        teamProgressCount: Object.keys(teamProgress).length,
+        selectedTeamsCount: selectedTeams.length,
+        selectedTeamsList: [...selectedTeams].sort()
+    });
     // Comprehensive readiness check
     if (!isD3Ready()) {
         console.warn('D3 not ready, falling back to legacy rendering');
+        renderD3InProgress = false;
         return renderLegacyChallenges();
     }
     
     try {
-        console.log('🎨 Rendering challenges with D3.js...');
+        console.log('🎨 === DÉBUT RENDU D3 ===');
+        console.log(`ChallengeMap: ${Object.keys(challengeMap).length} challenges`);
+        console.log(`D3Data nodes actuel: ${d3Data.nodes.length} nodes`);
+        console.log(`Éléments DOM actuels: ${d3Data.nodeGroup ? d3Data.nodeGroup.selectAll('.d3-challenge-node').size() : 0}`);
         
         // Convert data
         const data = convertToD3Data(challengeMap, teamProgress);
+        
+        // Vérifier si les données ont changé
+        const currentDataHash = JSON.stringify({
+            challengeIds: Object.keys(challengeMap).sort(),
+            teamProgress: teamProgress, // Include actual progress data, not just keys
+            selectedTeams: [...selectedTeams].sort() // Non-mutating sort
+        });
+        
+        // Check both local and global hash
+        if (lastDataHash === currentDataHash && window.lastDataHash === currentDataHash) {
+            console.log('⚠️ Données identiques, pas de nouveau rendu nécessaire');
+            console.log('📊 Hash unchanged - skipping render');
+            renderD3InProgress = false;
+            return;
+        }
+        
+        lastDataHash = currentDataHash;
+        window.lastDataHash = currentDataHash; // Sync with global
+        console.log('✅ Nouvelles données détectées, rendu nécessaire');
+        
         d3Data.nodes = data.nodes;
         d3Data.links = data.links;
         
@@ -373,12 +433,19 @@ function renderD3Challenges() {
         const alpha = d3Data.nodes.length > 50 ? 0.1 : 0.3;
         d3Data.simulation.alpha(alpha).restart();
         
-        console.log(`✅ Rendered ${d3Data.nodes.length} nodes and ${d3Data.links.length} links`);
+        console.log(`✅ FIN RENDU D3: ${d3Data.nodes.length} nodes et ${d3Data.links.length} links`);
+        console.log(`Éléments DOM finaux: ${d3Data.nodeGroup.selectAll('.d3-challenge-node').size()} nodes dans le DOM`);
+        console.log('🎨 === FIN RENDU D3 ===');
         
     } catch (error) {
         console.error('❌ Error rendering D3 challenges:', error);
         console.error('Error rendering visualization, falling back to legacy mode');
         renderLegacyChallenges();
+    } finally {
+        // Délai pour éviter les appels trop rapprochés
+        setTimeout(() => {
+            renderD3InProgress = false;
+        }, 50);
     }
 }
 
@@ -413,8 +480,28 @@ function renderD3Links() {
  * Render D3 nodes (challenge boxes)
  */
 function renderD3Nodes() {
+    console.log('🔧 === DÉBUT renderD3Nodes ===');
+    console.log(`Données à rendre: ${d3Data.nodes.length} nodes`);
+    
+    // Vérifier les doublons dans les données
+    const ids = d3Data.nodes.map(n => n.id);
+    const uniqueIds = [...new Set(ids)];
+    if (ids.length !== uniqueIds.length) {
+        console.error('❌ DOUBLONS détectés dans d3Data.nodes!');
+        console.error('IDs dupliqués:', ids.filter((id, index) => ids.indexOf(id) !== index));
+    } else {
+        console.log('✅ Aucun doublon dans les données');
+    }
+    
+    const existingNodes = d3Data.nodeGroup.selectAll('.d3-challenge-node');
+    console.log(`Éléments existants avant data(): ${existingNodes.size()}`);
+    
     const nodes = d3Data.nodeGroup.selectAll('.d3-challenge-node')
         .data(d3Data.nodes, d => d.id);
+    
+    console.log(`Exit selection: ${nodes.exit().size()} éléments à supprimer`);
+    console.log(`Enter selection: ${nodes.enter().size()} éléments à créer`);
+    console.log(`Update selection: ${nodes.size()} éléments à mettre à jour`);
     
     // Remove old nodes
     nodes.exit().remove();
@@ -496,6 +583,9 @@ function renderD3Nodes() {
     // Update status icon text
     nodeUpdate.select('.d3-challenge-text:last-of-type')
         .text(d => getStatusIcon(d.status));
+    
+    const finalCount = d3Data.nodeGroup.selectAll('.d3-challenge-node').size();
+    console.log(`🔧 === FIN renderD3Nodes: ${finalCount} éléments dans le DOM ===`);
 }
 
 /**
