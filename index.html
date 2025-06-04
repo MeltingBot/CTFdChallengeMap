@@ -1073,6 +1073,19 @@
         .about-features li {
             margin-bottom: 4px;
         }
+
+        /* Filter styles */
+        .challenge-filtered {
+            opacity: 0.3 !important;
+            pointer-events: none !important;
+            transition: opacity 0.3s ease;
+        }
+        
+        .d3-challenge-filtered {
+            opacity: 0.3 !important;
+            pointer-events: none !important;
+            transition: opacity 0.3s ease;
+        }
     </style>
 </head>
 <body>
@@ -1193,7 +1206,8 @@
                     <button class="control-btn" onclick="fitToScreen()" title="Adapter à l'écran">📐 Fit</button>
                 </div>
                 <div style="margin-left: 15px; border-left: 1px solid #d1d5db; padding-left: 15px;">
-                    <button class="control-btn" onclick="showAboutModal()" title="À propos">ℹ️ À propos</button>
+                    <button class="control-btn" onclick="showFilterModal()" title="Filtrer les challenges">🔍 Filtres</button>
+                <button class="control-btn" onclick="showAboutModal()" title="À propos">ℹ️ À propos</button>
                 </div>
             </div>
 
@@ -1319,6 +1333,75 @@
             <div class="about-license">
                 Sous licence MIT • © 2025 Oscar Zulu OSINT Crew<br>
                 Logiciel libre et open source
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Modal -->
+    <div id="filter-modal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.8); display: none; justify-content: center; align-items: center; z-index: 10002;">
+        <div style="background: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); width: 500px; max-width: 90vw; max-height: 80vh; overflow-y: auto; position: relative;">
+            <button onclick="hideFilterModal()" style="position: absolute; top: 16px; right: 20px; background: none; border: none; font-size: 24px; cursor: pointer; color: #6b7280;">✕</button>
+            
+            <h2 style="margin-bottom: 20px; color: #1e293b;">🔍 Filtres des Challenges</h2>
+            
+            <!-- Search -->
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">🔎 Recherche</label>
+                <input type="text" id="modal-search" placeholder="Nom du challenge..." style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+            </div>
+            
+            <!-- Categories -->
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">📂 Catégories</label>
+                <div id="modal-categories" style="max-height: 150px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; background: #f9fafb;">
+                    <!-- Categories will be populated here -->
+                </div>
+            </div>
+            
+            <!-- Difficulty -->
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">⭐ Difficulté (Points)</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="number" id="modal-min-points" min="0" max="500" value="0" style="width: 80px; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
+                    <span>à</span>
+                    <input type="number" id="modal-max-points" min="0" max="500" value="500" style="width: 80px; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
+                    <span>pts</span>
+                </div>
+            </div>
+            
+            <!-- Status -->
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">🎯 Statut</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="modal-solved" checked style="margin-right: 8px;">
+                        <span>✅ Résolus</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="modal-attempted" checked style="margin-right: 8px;">
+                        <span>⚡ Tentés</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="modal-available" checked style="margin-right: 8px;">
+                        <span>🔓 Disponibles</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="modal-locked" checked style="margin-right: 8px;">
+                        <span>🔒 Verrouillés</span>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Actions -->
+            <div style="display: flex; gap: 10px; justify-content: flex-end; border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 20px;">
+                <button onclick="resetModalFilters()" style="background: #6b7280; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer;">Reset</button>
+                <button onclick="applyModalFilters()" style="background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer;">Appliquer</button>
+            </div>
+            
+            <!-- Active filters display -->
+            <div id="modal-active-filters" style="margin-top: 15px; padding: 10px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; display: none;">
+                <div style="font-weight: 600; margin-bottom: 5px; color: #0369a1;">Filtres actifs :</div>
+                <div id="modal-filter-tags"></div>
             </div>
         </div>
     </div>

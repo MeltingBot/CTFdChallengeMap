@@ -1274,8 +1274,18 @@ async function loadTeamDataLazy(teamName) {
         debugLog(`🔄 Loading fresh data for team ${teamName}`);
         
         // Vérifier que nous sommes connectés
-        if (!isConnected) {
+        if (!isConnected && !currentUser.token) {
+            console.error(`❌ Connection check failed:`, {
+                isConnected,
+                hasToken: !!currentUser.token,
+                userName: currentUser.name,
+                ctfdUrl: currentUser.ctfdUrl
+            });
             throw new Error('Non connecté à CTFd');
+        }
+        
+        if (!isConnected && currentUser.token) {
+            console.warn('⚠️ isConnected is false but we have a token - possible timing issue, attempting anyway');
         }
         
         // Charger les solves depuis l'API CTFd
@@ -3293,6 +3303,18 @@ async function toggleTeam(teamName, checkbox) {
             setSelectedTeams(selectedTeams.filter(t => t !== teamName));
             checkbox.checked = false;
             console.error(`Failed to load team ${teamName}:`, error);
+            
+            // Show user-friendly error message
+            if (error.message.includes('Non connecté')) {
+                const debugInfo = `
+Debug info:
+- isConnected: ${isConnected}
+- currentUser.token exists: ${!!currentUser.token}
+- currentUser.name: ${currentUser.name}
+- Team attempting to load: ${teamName}`;
+                console.error(debugInfo);
+                alert('❌ Impossible de charger les données de l\'équipe.\n\nVérifiez que vous êtes bien connecté à CTFd et réessayez.\n\nConsultez la console pour plus de détails.');
+            }
             console.error('Error details:', error.message, error.stack);
         }
     } else {
@@ -4004,6 +4026,8 @@ function updateAPIStatus(status, message) {
         urlDisplay.style.display = 'none';
     }
     
+    const wasConnected = isConnected;
+    
     if (status === 'connected') {
         hideError();
         isConnected = true;
@@ -4016,6 +4040,11 @@ function updateAPIStatus(status, message) {
         isConnected = false;
     } else {
         isConnected = false;
+    }
+    
+    // Log connection state changes for debugging
+    if (wasConnected !== isConnected) {
+        console.log(`🔄 Connection state changed: ${wasConnected} → ${isConnected} (status: ${status}, message: ${message})`);
     }
 }
 
@@ -5454,3 +5483,260 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
 }); // End of initialization
+
+// ===== SIMPLE FILTER MODAL SYSTEM =====
+
+let currentFilters = {
+    search: '',
+    categories: new Set(),
+    minPoints: 0,
+    maxPoints: 500,
+    statuses: new Set(['solved', 'attempted', 'available', 'locked'])
+};
+
+// Show filter modal
+function showFilterModal() {
+    document.getElementById('filter-modal').style.display = 'flex';
+    populateModalCategories();
+    updateModalFromFilters();
+}
+
+// Hide filter modal
+function hideFilterModal() {
+    document.getElementById('filter-modal').style.display = 'none';
+}
+
+// Populate categories in modal
+function populateModalCategories() {
+    const container = document.getElementById('modal-categories');
+    if (!container || !challengeMap) return;
+    
+    const categories = new Set();
+    Object.values(challengeMap).forEach(challenge => {
+        if (challenge.category) {
+            categories.add(challenge.category);
+        }
+    });
+    
+    const sortedCategories = Array.from(categories).sort();
+    container.innerHTML = '';
+    
+    sortedCategories.forEach(category => {
+        const label = document.createElement('label');
+        label.style.cssText = 'display: flex; align-items: center; margin-bottom: 8px; cursor: pointer;';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = currentFilters.categories.has(category);
+        checkbox.value = category;
+        checkbox.style.marginRight = '8px';
+        
+        const text = document.createElement('span');
+        text.textContent = category;
+        
+        label.appendChild(checkbox);
+        label.appendChild(text);
+        container.appendChild(label);
+    });
+}
+
+// Update modal inputs from current filters
+function updateModalFromFilters() {
+    document.getElementById('modal-search').value = currentFilters.search;
+    document.getElementById('modal-min-points').value = currentFilters.minPoints;
+    document.getElementById('modal-max-points').value = currentFilters.maxPoints;
+    
+    document.getElementById('modal-solved').checked = currentFilters.statuses.has('solved');
+    document.getElementById('modal-attempted').checked = currentFilters.statuses.has('attempted');
+    document.getElementById('modal-available').checked = currentFilters.statuses.has('available');
+    document.getElementById('modal-locked').checked = currentFilters.statuses.has('locked');
+}
+
+// Apply filters from modal
+function applyModalFilters() {
+    // Get search
+    currentFilters.search = document.getElementById('modal-search').value.toLowerCase();
+    
+    // Get categories
+    currentFilters.categories.clear();
+    document.querySelectorAll('#modal-categories input[type="checkbox"]:checked').forEach(checkbox => {
+        currentFilters.categories.add(checkbox.value);
+    });
+    
+    // Get points range
+    currentFilters.minPoints = parseInt(document.getElementById('modal-min-points').value) || 0;
+    currentFilters.maxPoints = parseInt(document.getElementById('modal-max-points').value) || 500;
+    
+    // Get statuses
+    currentFilters.statuses.clear();
+    if (document.getElementById('modal-solved').checked) currentFilters.statuses.add('solved');
+    if (document.getElementById('modal-attempted').checked) currentFilters.statuses.add('attempted');
+    if (document.getElementById('modal-available').checked) currentFilters.statuses.add('available');
+    if (document.getElementById('modal-locked').checked) currentFilters.statuses.add('locked');
+    
+    // Apply filters to visualization
+    applyChallengeFilters();
+    
+    // Update active filters display
+    updateActiveFiltersDisplay();
+    
+    // Close modal
+    hideFilterModal();
+}
+
+// Reset filters in modal
+function resetModalFilters() {
+    currentFilters = {
+        search: '',
+        categories: new Set(),
+        minPoints: 0,
+        maxPoints: 500,
+        statuses: new Set(['solved', 'attempted', 'available', 'locked'])
+    };
+    
+    updateModalFromFilters();
+    populateModalCategories();
+    applyChallengeFilters();
+    updateActiveFiltersDisplay();
+}
+
+// Apply filters to challenges
+function applyChallengeFilters() {
+    if (!challengeMap) return;
+    
+    let hiddenCount = 0;
+    let visibleCount = 0;
+    
+    Object.entries(challengeMap).forEach(([challengeId, challenge]) => {
+        const shouldShow = checkChallengePassesFilters(challenge);
+        
+        // Apply to legacy nodes
+        const legacyNode = document.querySelector(`.challenge-node[data-challenge-id="${challengeId}"]`);
+        if (legacyNode) {
+            if (shouldShow) {
+                legacyNode.classList.remove('challenge-filtered');
+                visibleCount++;
+            } else {
+                legacyNode.classList.add('challenge-filtered');
+                hiddenCount++;
+            }
+        }
+        
+        // Apply to D3 nodes
+        if (window.d3 && d3.select) {
+            const d3Node = d3.select(`g[data-challenge-id="${challengeId}"]`);
+            if (!d3Node.empty()) {
+                d3Node.classed('d3-challenge-filtered', !shouldShow);
+            }
+        }
+    });
+    
+    debugLog(`Filters applied: ${visibleCount} visible, ${hiddenCount} hidden`);
+}
+
+// Check if challenge passes all filters
+function checkChallengePassesFilters(challenge) {
+    // Search filter
+    if (currentFilters.search && !challenge.name.toLowerCase().includes(currentFilters.search)) {
+        return false;
+    }
+    
+    // Category filter
+    if (currentFilters.categories.size > 0 && !currentFilters.categories.has(challenge.category)) {
+        return false;
+    }
+    
+    // Points filter
+    const points = challenge.value || challenge.points || 0;
+    if (points < currentFilters.minPoints || points > currentFilters.maxPoints) {
+        return false;
+    }
+    
+    // Status filter
+    const status = getSimpleChallengeStatus(challenge.id);
+    if (!currentFilters.statuses.has(status)) {
+        return false;
+    }
+    
+    return true;
+}
+
+// Get simple challenge status
+function getSimpleChallengeStatus(challengeId) {
+    const selectedTeamsList = getSelectedTeams();
+    if (selectedTeamsList.length === 0) return 'available';
+    
+    let hasSolved = false;
+    let hasAttempted = false;
+    
+    selectedTeamsList.forEach(teamName => {
+        const teamData = teamProgress[teamName];
+        if (teamData && teamData[challengeId]) {
+            const challengeData = teamData[challengeId];
+            if (challengeData.solved || challengeData.status === 'solved') {
+                hasSolved = true;
+            } else if (challengeData.attempted || challengeData.status === 'attempted') {
+                hasAttempted = true;
+            }
+        }
+    });
+    
+    if (hasSolved) return 'solved';
+    if (hasAttempted) return 'attempted';
+    return 'available';
+}
+
+// Update active filters display
+function updateActiveFiltersDisplay() {
+    const container = document.getElementById('modal-active-filters');
+    const tagsContainer = document.getElementById('modal-filter-tags');
+    
+    if (!container || !tagsContainer) return;
+    
+    const activeTags = [];
+    
+    // Search
+    if (currentFilters.search) {
+        activeTags.push(`🔎 "${currentFilters.search}"`);
+    }
+    
+    // Categories
+    if (currentFilters.categories.size > 0) {
+        currentFilters.categories.forEach(cat => {
+            activeTags.push(`📂 ${cat}`);
+        });
+    }
+    
+    // Points
+    if (currentFilters.minPoints > 0 || currentFilters.maxPoints < 500) {
+        activeTags.push(`⭐ ${currentFilters.minPoints}-${currentFilters.maxPoints}pts`);
+    }
+    
+    // Statuses
+    const allStatuses = ['solved', 'attempted', 'available', 'locked'];
+    const missingStatuses = allStatuses.filter(s => !currentFilters.statuses.has(s));
+    missingStatuses.forEach(status => {
+        const labels = {
+            solved: '❌ Non résolus',
+            attempted: '❌ Non tentés',
+            available: '❌ Non disponibles',
+            locked: '❌ Non verrouillés'
+        };
+        activeTags.push(labels[status]);
+    });
+    
+    if (activeTags.length > 0) {
+        container.style.display = 'block';
+        tagsContainer.innerHTML = activeTags.map(tag => 
+            `<span style="background: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin: 2px; display: inline-block;">${tag}</span>`
+        ).join('');
+    } else {
+        container.style.display = 'none';
+    }
+}
+
+// Make functions globally available
+window.showFilterModal = showFilterModal;
+window.hideFilterModal = hideFilterModal;
+window.applyModalFilters = applyModalFilters;
+window.resetModalFilters = resetModalFilters;
