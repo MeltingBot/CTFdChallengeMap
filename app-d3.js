@@ -48,7 +48,6 @@ const D3_CONFIG = {
  */
 function clearD3Visualization() {
     try {
-        console.log('🧹 Clearing D3 visualization...');
         
         // Stop simulation
         if (d3Data.simulation) {
@@ -71,7 +70,6 @@ function clearD3Visualization() {
         d3Data.pathGroup = null;
         d3Data.zoomContainer = null;
         
-        console.log('✅ D3 visualization cleared successfully');
     } catch (error) {
         console.error('❌ Error clearing D3 visualization:', error);
     }
@@ -81,7 +79,6 @@ function clearD3Visualization() {
  * Initialize D3.js visualization system with robust error handling
  */
 async function initializeD3Visualization() {
-    console.log('🎨 Initializing D3.js visualization system...');
     
     try {
         // Check if D3 is available
@@ -93,8 +90,7 @@ async function initializeD3Visualization() {
         // Check container immediately first (fast path)
         let container = checkContainerImmediate('map-container');
         if (!container) {
-            console.log('🔄 Container not immediately ready, waiting...');
-            // If not ready, wait asynchronously
+                // If not ready, wait asynchronously
             container = await waitForContainer('map-container');
             if (!container) {
                 console.error('❌ map-container not found or not ready after waiting');
@@ -128,7 +124,6 @@ async function initializeD3Visualization() {
         // Setup resize handler
         window.addEventListener('resize', handleD3Resize);
         
-        console.log('✅ D3.js visualization system initialized successfully');
         return true;
         
     } catch (error) {
@@ -245,6 +240,12 @@ function throttle(func, delay) {
     let timeoutId;
     let lastExecTime = 0;
     return function (...args) {
+        // Protection: ne pas exécuter si D3 a été nettoyé
+        if (!d3Data.nodeGroup || !d3Data.simulation) {
+            clearTimeout(timeoutId);
+            return;
+        }
+        
         const currentTime = Date.now();
         
         if (currentTime - lastExecTime > delay) {
@@ -253,6 +254,10 @@ function throttle(func, delay) {
         } else {
             clearTimeout(timeoutId);
             timeoutId = setTimeout(() => {
+                // Double vérification avant l'exécution différée
+                if (!d3Data.nodeGroup || !d3Data.simulation) {
+                    return;
+                }
                 func.apply(this, args);
                 lastExecTime = Date.now();
             }, delay - (currentTime - lastExecTime));
@@ -264,31 +269,37 @@ function throttle(func, delay) {
  * Convert challenge data to D3 format
  */
 function convertToD3Data(challengeMap, teamProgress = {}) {
-    console.log('🔄 === DÉBUT convertToD3Data ===');
-    console.log(`ChallengeMap: ${Object.keys(challengeMap).length} challenges`);
-    console.log(`TeamProgress: ${Object.keys(teamProgress).length} équipes`);
     
     const nodes = [];
     const links = [];
     
     // Create nodes from challenges
     Object.entries(challengeMap).forEach(([id, challenge]) => {
-        const node = {
-            id: id,
-            name: challenge.name,
-            category: challenge.category || 'General',
-            points: challenge.points || 0,
-            dependencies: challenge.dependencies || [],
-            position: challenge.position || { x: 0, y: 0 },
-            status: getChallengeStatus(id, teamProgress),
-            teamIndicators: getChallengeTeamIndicators(id),
-            // D3 positioning
-            x: challenge.position?.x || Math.random() * 800,
-            y: challenge.position?.y || Math.random() * 600,
-            fx: customPositions[id]?.x, // Fixed position if manually placed
-            fy: customPositions[id]?.y
-        };
-        nodes.push(node);
+        try {
+            const status = getChallengeStatus(id, teamProgress);
+            const teamIndicators = getChallengeTeamIndicators(id);
+            
+            const node = {
+                id: id,
+                name: challenge.name,
+                category: challenge.category || 'General',
+                points: challenge.points || 0,
+                dependencies: challenge.dependencies || [],
+                position: challenge.position || { x: 0, y: 0 },
+                status: status,
+                teamIndicators: teamIndicators,
+                // D3 positioning
+                x: challenge.position?.x || Math.random() * 800,
+                y: challenge.position?.y || Math.random() * 600,
+                fx: window.customPositions && window.customPositions[id]?.x, // Fixed position if manually placed
+                fy: window.customPositions && window.customPositions[id]?.y
+            };
+            
+            nodes.push(node);
+        } catch (error) {
+            console.error(`❌ Erreur lors du traitement du challenge ${id}:`, error);
+            console.error(`Challenge data:`, challenge);
+        }
     });
     
     // Create links from dependencies
@@ -305,7 +316,6 @@ function convertToD3Data(challengeMap, teamProgress = {}) {
         });
     });
     
-    console.log(`✅ FIN convertToD3Data: ${nodes.length} nodes, ${links.length} links`);
     
     return { nodes, links };
 }
@@ -368,14 +378,6 @@ function renderD3Challenges() {
     renderD3InProgress = true;
     renderD3LastCall = now;
     
-    // Tracer qui appelle cette fonction
-    console.log('🔍 renderD3Challenges appelé depuis:', new Error().stack.split('\n')[2]);
-    console.log('📊 Data state:', {
-        challengeCount: Object.keys(challengeMap).length,
-        teamProgressCount: Object.keys(teamProgress).length,
-        selectedTeamsCount: selectedTeams.length,
-        selectedTeamsList: [...selectedTeams].sort()
-    });
     // Comprehensive readiness check
     if (!isD3Ready()) {
         console.warn('D3 not ready, falling back to legacy rendering');
@@ -384,35 +386,29 @@ function renderD3Challenges() {
     }
     
     try {
-        console.log('🎨 === DÉBUT RENDU D3 ===');
-        console.log(`ChallengeMap: ${Object.keys(challengeMap).length} challenges`);
-        console.log(`D3Data nodes actuel: ${d3Data.nodes.length} nodes`);
-        console.log(`Éléments DOM actuels: ${d3Data.nodeGroup ? d3Data.nodeGroup.selectAll('.d3-challenge-node').size() : 0}`);
         
         // Convert data
         const data = convertToD3Data(challengeMap, teamProgress);
         
-        // Vérifier si les données ont changé
-        const currentDataHash = JSON.stringify({
-            challengeIds: Object.keys(challengeMap).sort(),
-            teamProgress: teamProgress, // Include actual progress data, not just keys
-            selectedTeams: [...selectedTeams].sort() // Non-mutating sort
-        });
+        // Protection contre selectedTeams mal formé
+        const safeSelectedTeamsLength = Array.isArray(selectedTeams) ? selectedTeams.length : 0;
         
-        // Check both local and global hash
-        if (lastDataHash === currentDataHash && window.lastDataHash === currentDataHash) {
-            console.log('⚠️ Données identiques, pas de nouveau rendu nécessaire');
-            console.log('📊 Hash unchanged - skipping render');
+        // Vérifier si les données ont changé - Version simple et sûre
+        const currentDataHash = `challenges:${Object.keys(challengeMap).length}-teams:${Object.keys(teamProgress).length}-selected:${safeSelectedTeamsLength}`;
+        
+        // Check both local and global hash, but allow first render after D3 initialization
+        if (lastDataHash === currentDataHash && window.lastDataHash === currentDataHash && d3Data.nodes.length > 0) {
+            console.log('⚠️ Données identiques et nodes déjà présents, pas de nouveau rendu nécessaire');
             renderD3InProgress = false;
             return;
         }
         
         lastDataHash = currentDataHash;
         window.lastDataHash = currentDataHash; // Sync with global
-        console.log('✅ Nouvelles données détectées, rendu nécessaire');
         
         d3Data.nodes = data.nodes;
         d3Data.links = data.links;
+        
         
         // Performance check - warn for large graphs
         if (d3Data.nodes.length > 100) {
@@ -433,9 +429,6 @@ function renderD3Challenges() {
         const alpha = d3Data.nodes.length > 50 ? 0.1 : 0.3;
         d3Data.simulation.alpha(alpha).restart();
         
-        console.log(`✅ FIN RENDU D3: ${d3Data.nodes.length} nodes et ${d3Data.links.length} links`);
-        console.log(`Éléments DOM finaux: ${d3Data.nodeGroup.selectAll('.d3-challenge-node').size()} nodes dans le DOM`);
-        console.log('🎨 === FIN RENDU D3 ===');
         
     } catch (error) {
         console.error('❌ Error rendering D3 challenges:', error);
@@ -480,28 +473,17 @@ function renderD3Links() {
  * Render D3 nodes (challenge boxes)
  */
 function renderD3Nodes() {
-    console.log('🔧 === DÉBUT renderD3Nodes ===');
-    console.log(`Données à rendre: ${d3Data.nodes.length} nodes`);
-    
-    // Vérifier les doublons dans les données
+    // Vérifier les doublons dans les données (diagnostic)
     const ids = d3Data.nodes.map(n => n.id);
     const uniqueIds = [...new Set(ids)];
     if (ids.length !== uniqueIds.length) {
         console.error('❌ DOUBLONS détectés dans d3Data.nodes!');
         console.error('IDs dupliqués:', ids.filter((id, index) => ids.indexOf(id) !== index));
-    } else {
-        console.log('✅ Aucun doublon dans les données');
     }
-    
-    const existingNodes = d3Data.nodeGroup.selectAll('.d3-challenge-node');
-    console.log(`Éléments existants avant data(): ${existingNodes.size()}`);
     
     const nodes = d3Data.nodeGroup.selectAll('.d3-challenge-node')
         .data(d3Data.nodes, d => d.id);
     
-    console.log(`Exit selection: ${nodes.exit().size()} éléments à supprimer`);
-    console.log(`Enter selection: ${nodes.enter().size()} éléments à créer`);
-    console.log(`Update selection: ${nodes.size()} éléments à mettre à jour`);
     
     // Remove old nodes
     nodes.exit().remove();
@@ -584,8 +566,6 @@ function renderD3Nodes() {
     nodeUpdate.select('.d3-challenge-text:last-of-type')
         .text(d => getStatusIcon(d.status));
     
-    const finalCount = d3Data.nodeGroup.selectAll('.d3-challenge-node').size();
-    console.log(`🔧 === FIN renderD3Nodes: ${finalCount} éléments dans le DOM ===`);
 }
 
 /**
@@ -607,7 +587,6 @@ function setupD3Drag() {
             d._originalFx = d.fx;
             d._originalFy = d.fy;
             
-            console.log(`🎯 Started dragging: ${d.name}`);
         })
         .on('drag', function(event, d) {
             // Update node position
@@ -629,16 +608,16 @@ function setupD3Drag() {
             d3.select(this).classed('dragging', false);
             
             // Save custom position
-            customPositions[d.id] = { x: d.fx, y: d.fy };
+            if (window.customPositions) {
+                window.customPositions[d.id] = { x: d.fx, y: d.fy };
+            }
             challengeMap[d.id].position = { x: d.fx, y: d.fy };
             
             // Save to session storage
             saveCustomPositions();
             
             // Show success notification
-            console.log(`Challenge "${d.name}" position saved`);
             
-            console.log(`✅ Finished dragging: ${d.name} to (${Math.round(d.fx)}, ${Math.round(d.fy)})`);
             
             // Update team paths if parcours mode is active
             if (window.parcoursMode && window.updateTeamPaths) {
@@ -651,6 +630,11 @@ function setupD3Drag() {
  * Update D3 positions during simulation tick
  */
 function updateD3Positions() {
+    // Protection: vérifier que D3 est toujours initialisé
+    if (!d3Data.nodeGroup || !d3Data.linkGroup) {
+        return;
+    }
+    
     // Update node positions
     d3Data.nodeGroup.selectAll('.d3-challenge-node')
         .attr('transform', d => `translate(${d.x}, ${d.y})`);
@@ -900,7 +884,12 @@ function getChallengeStatus(challengeId, teamProgress) {
         if (progress.locked) return 'locked';
         return 'available';
     } else {
-        // Multi-team view
+        // Multi-team view  
+        if (!selectedTeams || selectedTeams.length === 0) {
+            // Pas d'équipes sélectionnées : afficher tous les challenges comme disponibles
+            return 'available';
+        }
+        
         const hasAnyResolved = selectedTeams.some(team => 
             teamProgress[team] && teamProgress[team][challengeId] && teamProgress[team][challengeId].solved
         );
@@ -1070,10 +1059,7 @@ function showChallengeDetails(challengeId) {
     const challenge = challengeMap[challengeId];
     if (!challenge) return;
     
-    console.log(`Showing details for challenge: ${challenge.name}`);
     // This would normally show a detailed modal
-    // For now, just show a notification
-    console.log(`Challenge: ${challenge.name} (${challenge.points} pts)`);
 }
 
 /**
@@ -1082,7 +1068,6 @@ function showChallengeDetails(challengeId) {
 function onTeamSelectionChange() {
     // Refresh D3 visualization when team selection changes
     if (window.renderD3Challenges && d3Data.svg) {
-        console.log('🔄 Refreshing D3 visualization due to team selection change');
         renderD3Challenges();
     }
 }
@@ -1200,11 +1185,6 @@ function calculateTeamSolveSequences() {
  * Update team paths based on parcours mode
  */
 function updateTeamPaths() {
-    console.log('🛤️ updateTeamPaths called', {
-        pathGroup: !!d3Data.pathGroup,
-        parcoursMode: window.parcoursMode,
-        selectedTeams: window.selectedTeams
-    });
     
     if (!d3Data.pathGroup) {
         console.warn('❌ No pathGroup found');
@@ -1216,11 +1196,9 @@ function updateTeamPaths() {
     stopPathAnimation();
     
     if (!window.parcoursMode || !window.selectedTeams || window.selectedTeams.length === 0) {
-        console.log('❌ Conditions not met for drawing paths');
         return;
     }
     
-    console.log('🛤️ Drawing team paths for:', window.selectedTeams);
     
     // Calculate solve sequences for animation
     pathAnimationState.teamSolveSequences = calculateTeamSolveSequences();
@@ -1237,7 +1215,6 @@ function startPathAnimation() {
         stopPathAnimation();
     }
     
-    console.log('🎬 Starting path animation');
     
     // Reset animation state
     pathAnimationState.currentStep = 0;
@@ -1283,7 +1260,6 @@ function stopPathAnimation() {
     updateAnimateButton('🎬 Animer');
     hideTimeline();
     hideAnimationControls();
-    console.log('⏹️ Path animation stopped');
 }
 
 /**
@@ -1295,7 +1271,6 @@ function setupTeamMarkers() {
         defs = d3Data.svg.append('defs');
     }
     
-    console.log('🏹 Setting up markers for teams:', window.selectedTeams);
     
     window.selectedTeams.forEach((teamName, teamIndex) => {
         const team = window.teams.find(t => t.name === teamName);
@@ -1305,7 +1280,6 @@ function setupTeamMarkers() {
         
         // Create arrowhead marker for this team
         const markerId = `arrow-${teamName.replace(/\s+/g, '-')}`;
-        console.log(`🏹 Creating marker: ${markerId} with color: ${teamColor}`);
         
         defs.select(`#${markerId}`).remove(); // Remove if exists
         
@@ -1324,7 +1298,6 @@ function setupTeamMarkers() {
             .attr('fill', teamColor)
             .attr('opacity', 0.8);
             
-        console.log(`✅ Marker created: ${markerId}`);
     });
 }
 
@@ -1339,7 +1312,6 @@ function animateNextStep() {
     if (pathAnimationState.currentStep >= allSolveEvents.length) {
         // Animation complete
         pathAnimationState.isPlaying = false;
-        console.log('✅ Path animation completed');
         const lastEvent = allSolveEvents[allSolveEvents.length - 1];
         const endTime = pathAnimationState.endTime;
         const startTime = pathAnimationState.startTime;
@@ -1357,7 +1329,6 @@ function animateNextStep() {
     const teamIndex = window.selectedTeams.indexOf(currentEvent.teamName);
     const teamColor = team ? team.color : `hsl(${teamIndex * 360 / window.selectedTeams.length}, 70%, 50%)`;
     
-    console.log(`🎬 Step ${pathAnimationState.currentStep + 1}/${allSolveEvents.length}: ${currentEvent.teamName} → ${currentEvent.toSolve.node.name}`);
     
     // Update timeline with current event
     updateTimeline(currentEvent, pathAnimationState.currentStep + 1, allSolveEvents.length);
@@ -1487,7 +1458,6 @@ function updateAnimateButton(text) {
  */
 function setAnimationSpeed(speed) {
     pathAnimationState.speed = speed;
-    console.log(`🎬 Animation speed set to ${speed}ms`);
 }
 
 /**
@@ -1495,7 +1465,6 @@ function setAnimationSpeed(speed) {
  */
 function changeAnimationSpeed(multiplier) {
     pathAnimationState.speedMultiplier = multiplier;
-    console.log(`🎬 Animation speed multiplier set to ${multiplier}x`);
     
     // Update UI to show active speed button
     document.querySelectorAll('#animation-controls .control-btn').forEach(btn => {
@@ -1762,7 +1731,6 @@ function updateTeamPathsStatic() {
                 .attr('d', pathString);
             
             // Draw main path
-            console.log(`🏹 Drawing path with marker: url(#${markerId})`);
             d3Data.pathGroup.append('path')
                 .attr('class', `team-path team-path-${teamIndex}`)
                 .attr('stroke', teamColor)
@@ -1793,4 +1761,3 @@ window.changeAnimationSpeed = safeD3Operation(changeAnimationSpeed, 'change anim
 // Export d3Data for debugging
 window.d3Data = d3Data;
 
-console.log('📦 D3.js Challenge Visualization System loaded with error protection');
