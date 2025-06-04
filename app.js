@@ -5602,7 +5602,10 @@ function resetModalFilters() {
 
 // Apply filters to challenges
 function applyChallengeFilters() {
-    if (!challengeMap) return;
+    if (!challengeMap) {
+        console.warn('challengeMap not available, skipping filter application');
+        return;
+    }
     
     let hiddenCount = 0;
     let visibleCount = 0;
@@ -5611,7 +5614,7 @@ function applyChallengeFilters() {
         const shouldShow = checkChallengePassesFilters(challenge);
         
         // Apply to legacy nodes
-        const legacyNode = document.querySelector(`.challenge-node[data-challenge-id="${challengeId}"]`);
+        const legacyNode = document.querySelector(`.challenge-node[data-challenge="${challengeId}"]`);
         if (legacyNode) {
             if (shouldShow) {
                 legacyNode.classList.remove('challenge-filtered');
@@ -5622,12 +5625,11 @@ function applyChallengeFilters() {
             }
         }
         
-        // Apply to D3 nodes
-        if (window.d3 && d3.select) {
-            const d3Node = d3.select(`g[data-challenge-id="${challengeId}"]`);
-            if (!d3Node.empty()) {
-                d3Node.classed('d3-challenge-filtered', !shouldShow);
-            }
+        // Apply to D3 nodes - use the data binding instead of DOM selectors
+        if (window.d3Data && window.d3Data.nodeGroup) {
+            window.d3Data.nodeGroup.selectAll('.d3-challenge-node')
+                .filter(d => d.id === challengeId)
+                .classed('d3-challenge-filtered', !shouldShow);
         }
     });
     
@@ -5663,8 +5665,13 @@ function checkChallengePassesFilters(challenge) {
 
 // Get simple challenge status
 function getSimpleChallengeStatus(challengeId) {
-    const selectedTeamsList = getSelectedTeams();
+    const selectedTeamsList = selectedTeams || [];
     if (selectedTeamsList.length === 0) return 'available';
+    
+    // Safety check for teamProgress
+    if (!teamProgress || typeof teamProgress !== 'object') {
+        return 'available';
+    }
     
     let hasSolved = false;
     let hasAttempted = false;
