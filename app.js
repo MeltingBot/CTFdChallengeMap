@@ -505,6 +505,7 @@ async function loadChallengeSolves(challengeId) {
         }
         
         // Collecter les solves des équipes sélectionnées depuis teamProgress
+        
         for (const teamName of selectedTeams) {
             debugLog(`  Checking team: ${teamName}`, {
                 hasTeamProgress: !!teamProgress[teamName],
@@ -1110,18 +1111,6 @@ async function loadTeamDataLazy(teamName) {
         return;
     }
     
-    // Détecter le mode démo et générer des données de démo
-    if (currentUser.ctfdUrl === 'demo') {
-        debugLog(`🎭 Génération de données de démo pour ${teamName}`);
-        generateMockProgressDataForTeam(teamName);
-        
-        // Mettre à jour l'affichage des équipes
-        if (userPermissions.canViewAllTeams) {
-            generateTeamFilters();
-        }
-        
-        return teamProgress[teamName];
-    }
     
     // Check cache first - mais vérifier aussi que teamProgress existe
     if (isCacheValid(teamName) && teamProgress[teamName]) {
@@ -1145,28 +1134,30 @@ async function loadTeamDataLazy(teamName) {
     try {
         debugLog(`🔄 Loading fresh data for team ${teamName}`);
         
-        // In demo mode, generate mock data
-        if (!isConnected || currentUser.token === 'demo') {
-            await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1000)); // Simulate delay
-            generateMockProgressDataForTeam(teamName);
-            const mockData = teamProgress[teamName];
-            setCachedTeamData(teamName, mockData);
-            
-            debugLog(`Team ${teamName} data loaded successfully`);
-            return mockData;
+        // Vérifier que nous sommes connectés
+        if (!isConnected) {
+            throw new Error('Non connecté à CTFd');
         }
         
         // Charger les solves depuis l'API CTFd
         const team = teams.find(t => t.name === teamName);
         if (!team) {
-            throw new Error(`Team ${teamName} not found`);
+            throw new Error(`Team ${teamName} not found in teams list`);
         }
         
         if (!team.id) {
-            throw new Error(`Team ${teamName} has no ID`);
+            console.error(`Team object:`, team);
+            console.error(`Available teams:`, teams.map(t => ({name: t.name, id: t.id})));
+            throw new Error(`Team ${teamName} has no ID. Team object: ${JSON.stringify(team)}`);
         }
         
         debugLog(`🔄 Loading solves for team ${teamName} (ID: ${team.id}, Individual: ${team.isIndividual || false})`);
+        
+        // Vérifier que challengeMap n'est pas vide
+        if (Object.keys(challengeMap).length === 0) {
+            console.error(`❌ challengeMap is empty! Cannot process team data without challenges.`);
+            throw new Error(`Cannot load team data: challengeMap is empty. Make sure challenges are loaded from CTFd first.`);
+        }
         
         try {
             let solvesResponse;
@@ -1183,7 +1174,12 @@ async function loadTeamDataLazy(teamName) {
                 }
             } else {
                 // Mode équipe standard
-                solvesResponse = await callCTFdAPI(`/api/v1/teams/${team.id}/solves`);
+                try {
+                    solvesResponse = await callCTFdAPI(`/api/v1/teams/${team.id}/solves`);
+                } catch (apiError) {
+                    console.error(`Failed to load solves for team ${teamName} (ID: ${team.id}):`, apiError);
+                    throw new Error(`API call failed for team ${teamName}: ${apiError.message}`);
+                }
             }
             
             const solves = solvesResponse.data || [];
@@ -1444,26 +1440,11 @@ async function callCTFdAPIWithPagination(endpoint, method = 'GET') {
     return { data: allData };
 }
 
-// Configuration des challenges avec leurs dépendances (positions seront recalculées)
-let challengeMap = {
-    'osint-start': { name: 'Reconnaissance Passive', position: { x: 0, y: 0 }, dependencies: [], points: 50, category: 'OSINT' },
-    'google-dork': { name: 'Google Dorking', position: { x: 0, y: 0 }, dependencies: ['osint-start'], points: 100, category: 'OSINT' },
-    'whois-investigation': { name: 'WHOIS Investigation', position: { x: 0, y: 0 }, dependencies: ['osint-start'], points: 100, category: 'OSINT' },
-    'social-media': { name: 'Social Media Hunt', position: { x: 0, y: 0 }, dependencies: ['google-dork'], points: 150, category: 'OSINT' },
-    'email-investigation': { name: 'Email Investigation', position: { x: 0, y: 0 }, dependencies: ['google-dork', 'whois-investigation'], points: 200, category: 'OSINT' },
-    'dns-enum': { name: 'DNS Enumeration', position: { x: 0, y: 0 }, dependencies: ['whois-investigation'], points: 150, category: 'Network' },
-    'geolocation': { name: 'Geolocation Analysis', position: { x: 0, y: 0 }, dependencies: ['social-media'], points: 250, category: 'OSINT' },
-    'metadata': { name: 'Metadata Extraction', position: { x: 0, y: 0 }, dependencies: ['social-media', 'email-investigation'], points: 200, category: 'Forensics' },
-    'subdomain': { name: 'Subdomain Discovery', position: { x: 0, y: 0 }, dependencies: ['dns-enum', 'email-investigation'], points: 300, category: 'Network' },
-    'deepweb': { name: 'Deep Web Search', position: { x: 0, y: 0 }, dependencies: ['dns-enum'], points: 350, category: 'OSINT' },
-    'timeline': { name: 'Timeline Construction', position: { x: 0, y: 0 }, dependencies: ['geolocation', 'metadata'], points: 400, category: 'Analysis' },
-    'network-map': { name: 'Network Mapping', position: { x: 0, y: 0 }, dependencies: ['subdomain', 'metadata'], points: 450, category: 'Network' },
-    'advanced-osint': { name: 'Advanced OSINT', position: { x: 0, y: 0 }, dependencies: ['subdomain', 'deepweb'], points: 500, category: 'OSINT' },
-    'final-investigation': { name: 'Final Investigation', position: { x: 0, y: 0 }, dependencies: ['timeline', 'network-map', 'advanced-osint'], points: 1000, category: 'Final' }
-};
+// Configuration des challenges - sera peuplé depuis CTFd
+let challengeMap = {};
 
-// Fonction pour recalculer les positions des challenges de démo avec logique hiérarchique correcte
-function updateDemoChallengePositions() {
+// FONCTION SUPPRIMÉE - PLUS DE MODE DÉMO
+/*function updateDemoChallengePositions() {
     debugLog('=== RECALCUL DES POSITIONS DÉMO ===');
     
     // Calculer les niveaux hiérarchiques avec la nouvelle logique
@@ -1558,10 +1539,10 @@ function updateDemoChallengePositions() {
     Object.entries(challengeMap).forEach(([id, challenge]) => {
         debugLog(`${challenge.name}: Niveau ${levels[id]}, Position (${challenge.position.x}, ${challenge.position.y}), Dépendances: [${challenge.dependencies.join(', ')}]`);
     });
-}
+}*/
 
-// Initialiser les positions des challenges de démo
-updateDemoChallengePositions();
+// Supprimé - plus d'initialisation démo
+// updateDemoChallengePositions();
 
 function showCORSInstructions() {
     const instructions = 
@@ -2189,7 +2170,7 @@ async function loadUserData() {
         
         // Forcer la mise à jour de l'affichage pour les utilisateurs non-admin
         debugLog('🎨 Mise à jour de l\'affichage après chargement des données utilisateur');
-        updateChallengesDisplay();
+        updateVisualization();
         
         // Désactiver les contrôles multi-équipes
         document.getElementById('teams-section').classList.add('admin-only');
@@ -2199,72 +2180,9 @@ async function loadUserData() {
     } catch (error) {
         console.error('Erreur lors du chargement des données utilisateur:', error);
         showError('Erreur de chargement: ' + error.message + '. Vérifiez que l\'API CTFd est accessible.');
-        // Fallback vers des données de démo
-        generateMockUserData();
     }
 }
 
-async function loadDemoData(type) {
-    showLoginLoader('Chargement du mode démo...');
-    
-    // Simuler un délai de chargement
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    if (type === 'admin') {
-        currentUser = { name: 'Demo Admin', token: 'demo_admin_token', ctfdUrl: 'demo', teamName: null, id: null };
-        userPermissions = { isAdmin: true, canViewAllTeams: true, canViewFutureChalls: true };
-        generateMockAdminData();
-    } else {
-        currentUser = { name: 'Demo User', token: 'demo_user_token', ctfdUrl: 'demo', teamName: 'Demo Team', id: null };
-        userPermissions = { isAdmin: false, canViewAllTeams: false, canViewFutureChalls: false };
-        generateMockUserData();
-    }
-    
-    updateAPIStatus('connected', `Mode démo: ${userPermissions.isAdmin ? 'Admin' : 'Équipe'}`);
-    hideLoginLoader();
-    showMainInterface();
-}
-
-function generateMockAdminData() {
-    const mockTeams = [
-        'CyberDetectives', 'InfoHunters', 'DigitalSleuth', 'TrackMasters', 
-        'DataHounds', 'NetTrackers', 'SearchExperts', 'IntelGatherers'
-    ];
-    
-    // Use the distinct color generator for demo teams
-    const teamColors = generateDistinctTeamColors(mockTeams.length);
-    
-    teams = mockTeams.map((name, index) => ({
-        name: name,
-        color: teamColors[index]
-    }));
-    
-    setSelectedTeams([]); // Start with no teams selected for lazy loading
-    // Ne plus générer de données automatiquement - elles seront générées lors de la sélection
-    
-    // Activer tous les contrôles pour les admins
-    document.getElementById('teams-section').classList.remove('admin-only');
-    document.getElementById('paths-btn').classList.remove('disabled');
-    document.getElementById('heatmap-btn').classList.remove('disabled');
-    
-    // Régénérer la liste des équipes
-    generateTeamFilters();
-    
-    // Mettre à jour les statistiques globales
-    updateGlobalStats();
-}
-
-function generateMockUserData() {
-    teams = [{ name: 'Demo Team', color: '#3b82f6' }];
-    setSelectedTeams(['Demo Team']);
-    currentUser.teamName = 'Demo Team';
-    generateMockProgressDataForTeam('Demo Team');
-    
-    // Désactiver les contrôles multi-équipes
-    document.getElementById('teams-section').classList.add('admin-only');
-    document.getElementById('paths-btn').classList.add('disabled');
-    document.getElementById('heatmap-btn').classList.add('disabled');
-}
 
 function generateProgressFromTeamSolves(teamSolves) {
     // Nouvelle fonction optimisée qui utilise les solves des équipes directement
@@ -2408,82 +2326,7 @@ function generateUserProgressFromSubmissions(userSolves) {
     }
 }
 
-function generateMockProgressData() {
-    // For lazy loading, only generate data for already selected teams
-    // This function is now mainly used for maintaining compatibility
-    selectedTeams.forEach((teamName, teamIndex) => {
-        const team = teams.find(t => t.name === teamName);
-        if (!team) return;
-        
-        teamProgress[team.name] = {};
-        const teamSkill = 0.9 - (teamIndex * 0.1);
-        
-        Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
-            const dependenciesResolved = challengeInfo.dependencies.every(dep => 
-                teamProgress[team.name][dep]?.solved || false
-            );
 
-            if (!dependenciesResolved && challengeInfo.dependencies.length > 0) {
-                teamProgress[team.name][challengeId] = {
-                    solved: false,
-                    attempted: false,
-                    locked: true,
-                    timeSpent: 0,
-                    attempts: 0
-                };
-                return;
-            }
-
-            const difficulty = challengeInfo.points / 100;
-            const solveProb = Math.max(0.1, teamSkill / difficulty * (0.6 + Math.random() * 0.8));
-            
-            const solved = Math.random() < solveProb;
-            const attempted = solved || Math.random() < 0.7;
-            
-            teamProgress[team.name][challengeId] = {
-                solved: solved,
-                attempted: attempted,
-                locked: false,
-                timeSpent: attempted ? Math.floor(Math.random() * 120) + 10 : 0,
-                attempts: attempted ? Math.floor(Math.random() * 5) + 1 : 0,
-                points: solved ? challengeInfo.points : 0,
-                date: solved ? new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString() : null
-            };
-        });
-    });
-}
-
-function generateMockProgressDataForTeam(teamName) {
-    teamProgress[teamName] = {};
-    const teamSkill = 0.7; // Compétence moyenne
-    
-    Object.entries(challengeMap).forEach(([challengeId, challengeInfo]) => {
-        const dependenciesResolved = challengeInfo.dependencies.every(dep => 
-            teamProgress[teamName][dep]?.solved || false
-        );
-
-        if (!dependenciesResolved && challengeInfo.dependencies.length > 0) {
-            // Ne pas révéler les challenges verrouillés aux équipes
-            return;
-        }
-
-        const difficulty = challengeInfo.points / 100;
-        const solveProb = Math.max(0.1, teamSkill / difficulty * (0.6 + Math.random() * 0.8));
-        
-        const solved = Math.random() < solveProb;
-        const attempted = solved || Math.random() < 0.7;
-        
-        teamProgress[teamName][challengeId] = {
-            solved: solved,
-            attempted: attempted,
-            locked: false,
-            timeSpent: attempted ? Math.floor(Math.random() * 120) + 10 : 0,
-            attempts: attempted ? Math.floor(Math.random() * 5) + 1 : 0,
-            points: solved ? challengeInfo.points : 0,
-            date: solved ? new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString() : null
-        };
-    });
-}
 
 async function showMainInterface() {
     document.getElementById('login-modal').style.display = 'none';
@@ -2558,7 +2401,7 @@ async function initializeInterface() {
         // Pour les utilisateurs non-admin, forcer l'affichage de leur progression
         if (!userPermissions.isAdmin && currentUser.teamName && selectedTeams.includes(currentUser.teamName)) {
             debugLog('🎨 Forçage de l\'affichage des couleurs pour utilisateur non-admin');
-            updateChallengesDisplay();
+            updateVisualization();
             debugLog('🎯 Affichage automatique de la progression pour l\'utilisateur:', currentUser.teamName);
             // Forcer la mise à jour des challenges avec la progression
             generateChallengeMap();
@@ -2579,12 +2422,28 @@ function generateTeamFilters(searchTerm = '') {
     if (!searchBar) {
         searchBar = document.createElement('div');
         searchBar.id = 'team-search-container';
+        searchBar.style.position = 'relative';
         searchBar.innerHTML = `
             <input type="text" 
                    id="team-search" 
-                   placeholder="🔍 Rechercher une équipe..." 
-                   style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;"
-                   oninput="searchTeams(this.value)">
+                   placeholder="🔍 Rechercher et sélectionner une équipe (Entrée pour sélectionner)..." 
+                   style="width: 100%; padding: 8px 80px 8px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;"
+                   oninput="searchTeams(this.value)"
+                   onkeydown="handleSearchKeydown(event)">
+            <div style="position: absolute; right: 0; top: 0; display: flex;">
+                <button 
+                    onclick="selectFirstSearchResult()"
+                    style="padding: 8px 6px; font-size: 11px; border: none; border-left: 1px solid #d1d5db; cursor: pointer; background: #10b981; color: white;"
+                    title="Sélectionner la première équipe trouvée">
+                    ✓
+                </button>
+                <button 
+                    onclick="clearSearch()"
+                    style="padding: 8px 6px; font-size: 11px; border: none; border-left: 1px solid #d1d5db; cursor: pointer; background: #ef4444; color: white; border-radius: 0 4px 4px 0;"
+                    title="Effacer la recherche">
+                    ✗
+                </button>
+            </div>
             ${userPermissions.isAdmin ? `
             <div style="margin-bottom: 10px; display: flex; gap: 5px; flex-wrap: wrap;">
                 <button 
@@ -2697,26 +2556,99 @@ function generateTeamFilters(searchTerm = '') {
             teamStyle = 'opacity: 0.5; text-decoration: line-through;';
         }
         
+        // Mettre en évidence la première équipe si on est en mode recherche
+        const isFirstResult = searchTerm && filteredTeams[0] === team;
+        const highlightStyle = isFirstResult ? 'background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 4px; margin: 1px;' : '';
+        
         return `
-            <label class="team-checkbox" style="${teamStyle}" title="${team.hidden ? 'Équipe cachée' : ''}${team.banned ? 'Équipe bannie' : ''}">
+            <label class="team-checkbox" style="${teamStyle}${highlightStyle}" title="${team.hidden ? 'Équipe cachée' : ''}${team.banned ? 'Équipe bannie' : ''}${isFirstResult ? ' - Appuyez sur Entrée pour sélectionner' : ''}">
                 <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleTeam('${team.name}', this)">
                 <div class="team-color" style="background: ${team.color};"></div>
-                <span class="team-name">${team.name}${statusIndicator}</span>
+                <span class="team-name">${team.name}${statusIndicator}${isFirstResult ? ' 🎯' : ''}</span>
                 <span class="team-progress">${progressText}</span>
             </label>
         `;
     }).join('');
     
-    // Afficher le nombre de résultats
+    // Afficher le nombre de résultats avec options de sélection
     if (searchTerm) {
-        container.innerHTML = `<div style="font-size: 11px; color: #6b7280; margin-bottom: 8px;">
-            ${filteredTeams.length} équipe(s) trouvée(s)</div>` + container.innerHTML;
+        const unselectedCount = filteredTeams.filter(team => !selectedTeams.includes(team.name)).length;
+        container.innerHTML = `<div style="font-size: 11px; color: #6b7280; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+            <span>${filteredTeams.length} équipe(s) trouvée(s)${unselectedCount > 0 ? ` (${unselectedCount} non sélectionnée(s))` : ''}</span>
+            ${unselectedCount > 0 ? `
+                <button 
+                    onclick="selectAllVisibleTeams()"
+                    style="padding: 2px 6px; font-size: 10px; border: 1px solid #10b981; border-radius: 3px; cursor: pointer; background: white; color: #10b981;">
+                    ✓ Toutes
+                </button>
+            ` : ''}
+        </div>` + container.innerHTML;
     }
 }
 
 // Fonction de recherche d'équipes
 function searchTeams(searchTerm) {
     generateTeamFilters(searchTerm);
+}
+
+// Fonction pour gérer les touches dans la barre de recherche
+async function handleSearchKeydown(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        await selectFirstSearchResult();
+    }
+}
+
+// Fonction pour sélectionner la première équipe trouvée dans la recherche
+async function selectFirstSearchResult() {
+    const searchTerm = document.getElementById('team-search')?.value || '';
+    if (!searchTerm.trim()) return;
+    
+    // Obtenir les équipes filtrées
+    const filteredTeams = teams.filter(team => {
+        // Filtre de recherche
+        if (!team.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+            return false;
+        }
+        
+        // Filtres de statut (seulement pour les admins)
+        if (userPermissions.isAdmin) {
+            if (team.hidden && !teamStatusFilters.hidden) return false;
+            if (team.banned && !teamStatusFilters.banned) return false;
+            if (!team.hidden && !team.banned && !teamStatusFilters.active) return false;
+        }
+        
+        return true;
+    });
+    
+    if (filteredTeams.length > 0) {
+        const teamToSelect = filteredTeams[0];
+        
+        // Vérifier si l'équipe n'est pas déjà sélectionnée
+        if (!selectedTeams.includes(teamToSelect.name)) {
+            // Ajouter l'équipe à la sélection (sélection additive)
+            const newSelection = [...selectedTeams, teamToSelect.name];
+            setSelectedTeams(newSelection);
+            
+            // Charger les données si nécessaire
+            if (!teamProgress[teamToSelect.name] && !loadingTeams.has(teamToSelect.name)) {
+                await loadTeamDataLazy(teamToSelect.name);
+            }
+            
+            debugLog(`🎯 Équipe "${teamToSelect.name}" sélectionnée via recherche`);
+        }
+        
+        // Vider la recherche après sélection
+        document.getElementById('team-search').value = '';
+        generateTeamFilters('');
+        updateVisualization();
+    }
+}
+
+// Fonction pour effacer la recherche
+function clearSearch() {
+    document.getElementById('team-search').value = '';
+    generateTeamFilters('');
 }
 
 // Fonction pour basculer les filtres de statut d'équipe
@@ -2757,7 +2689,7 @@ function toggleTeamStatusFilter(status) {
 }
 
 // Fonction pour sélectionner toutes les équipes visibles (filtrées)
-function selectAllVisibleTeams() {
+async function selectAllVisibleTeams() {
     const searchTerm = document.getElementById('team-search')?.value || '';
     
     // Obtenir les équipes filtrées
@@ -2778,21 +2710,22 @@ function selectAllVisibleTeams() {
     });
     
     // Ajouter toutes les équipes filtrées à la sélection
-    filteredTeams.forEach(team => {
-        if (!selectedTeams.includes(team.name)) {
-            selectedTeams.push(team.name);
+    const newSelection = [...selectedTeams];
+    for (const team of filteredTeams) {
+        if (!newSelection.includes(team.name)) {
+            newSelection.push(team.name);
             
             // Charger les données si nécessaire
             if (!teamProgress[team.name] && !loadingTeams.has(team.name)) {
-                loadTeamDataLazy(team.name);
+                await loadTeamDataLazy(team.name);
             }
         }
-    });
+    }
     
     // Sauvegarder et mettre à jour
-    setSelectedTeams(selectedTeams);
+    setSelectedTeams(newSelection);
     generateTeamFilters(searchTerm);
-    updateChallengesDisplay();
+    updateVisualization();
 }
 
 // Fonction pour désélectionner toutes les équipes visibles (filtrées)
@@ -2823,7 +2756,7 @@ function deselectAllVisibleTeams() {
     // Sauvegarder et mettre à jour
     setSelectedTeams(newSelectedTeams);
     generateTeamFilters(searchTerm);
-    updateChallengesDisplay();
+    updateVisualization();
 }
 
 // Fonction de tri des équipes
@@ -2862,6 +2795,13 @@ function sortTeamsBy(mode) {
 
 async function toggleTeam(teamName, checkbox) {
     if (checkbox.checked) {
+        // Vérifier que les challenges sont chargés avant de charger les données d'équipe
+        if (Object.keys(challengeMap).length === 0) {
+            checkbox.checked = false;
+            alert('Les challenges ne sont pas encore chargés. Attendez que la connexion à CTFd soit terminée.');
+            return;
+        }
+        
         // Add team to selection and load its data
         if (!selectedTeams.includes(teamName)) {
             setSelectedTeams([...selectedTeams, teamName]);
@@ -2877,43 +2817,55 @@ async function toggleTeam(teamName, checkbox) {
             }
             
             updateVisualization();
-            updateChallengesDisplay();
+            updateVisualization();
             debugLog(`Team ${teamName} added to view`);
         } catch (error) {
             // Remove from selection if loading failed
             setSelectedTeams(selectedTeams.filter(t => t !== teamName));
             checkbox.checked = false;
-            console.error(`Failed to load team ${teamName}`);
+            console.error(`Failed to load team ${teamName}:`, error);
+            console.error('Error details:', error.message, error.stack);
         }
     } else {
         // Remove team from selection
         setSelectedTeams(selectedTeams.filter(t => t !== teamName));
         updateVisualization();
-        updateChallengesDisplay();
+        updateVisualization();
         debugLog(`Team ${teamName} removed from view`);
     }
 }
 
-function selectAllTeams() {
+async function selectAllTeams() {
     if (!userPermissions.canViewAllTeams) return;
     
     const checkboxes = document.querySelectorAll('#team-filters input[type="checkbox"]');
+    const newSelection = [...selectedTeams];
+    
     checkboxes.forEach(checkbox => {
         checkbox.checked = true;
         const teamName = checkbox.parentElement.querySelector('.team-name').textContent;
-        if (!selectedTeams.includes(teamName)) {
-            setSelectedTeams([...selectedTeams, teamName]);
+        if (!newSelection.includes(teamName)) {
+            newSelection.push(teamName);
         }
     });
     
-    // Load all team data
-    const loadingPromises = teams.map(team => loadTeamDataLazy(team.name));
-    Promise.all(loadingPromises).then(() => {
-        updateVisualization();
-        debugLog(`All ${teams.length} teams loaded`);
-    }).catch(() => {
-        debugWarn('Some teams failed to load');
+    setSelectedTeams(newSelection);
+    
+    // Load data for newly selected teams
+    const loadingPromises = newSelection.map(async (teamName) => {
+        if (!teamProgress[teamName] && !loadingTeams.has(teamName)) {
+            await loadTeamDataLazy(teamName);
+        }
     });
+    
+    try {
+        await Promise.all(loadingPromises);
+        updateVisualization();
+        updateVisualization();
+        debugLog(`${newSelection.length} teams loaded`);
+    } catch (error) {
+        console.error('Some teams failed to load:', error);
+    }
 }
 
 function setViewMode(mode) {
