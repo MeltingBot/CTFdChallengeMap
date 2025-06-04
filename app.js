@@ -1859,8 +1859,17 @@ async function loadUserPermissions() {
         
         return isAdmin;
     } catch (error) {
-        console.error('Error loading user permissions:', error);
-        throw error;
+        // Gestion spécifique des erreurs d'authentification
+        if (error.status === 401) {
+            console.warn('❌ Authentication failed: Invalid token or insufficient permissions');
+            const authError = new Error('AUTHENTICATION_FAILED');
+            authError.status = 401;
+            authError.originalError = error;
+            throw authError;
+        } else {
+            console.error('Error loading user permissions:', error);
+            throw error;
+        }
     }
 }
 
@@ -1929,6 +1938,8 @@ async function connectToAPI() {
         
         if (error.message === 'CORS_POLICY_ERROR') {
             showCORSError();
+        } else if (error.message === 'AUTHENTICATION_FAILED') {
+            showAuthenticationError();
         } else {
             showError('Erreur de connexion à l\'API CTFd: ' + error.message);
         }
@@ -2015,6 +2026,13 @@ async function authenticateWithCTFd(ctfdUrl, token) {
  * Determine if an API error is expected and should not spam logs
  */
 function isExpectedApiError(url, status) {
+    // 401 errors that are handled gracefully
+    if (status === 401) {
+        return (
+            url.includes('/api/v1/users/me')            // Authentication check endpoint
+        );
+    }
+    
     // 403 errors that are expected
     if (status === 403) {
         return (
@@ -4015,6 +4033,29 @@ Le serveur CTFd ne permet pas les requêtes cross-origin depuis cette page.<br><
 4. <strong>Configuration CTFd :</strong> Ajoutez les headers CORS dans CTFd<br><br>
 <button class="demo-btn" onclick="useCORSProxy()">🔧 Essayer avec proxy CORS</button>
 <button class="demo-btn" onclick="showCORSInstructions()">📖 Instructions détaillées</button>`;
+    
+    errorElement.style.display = 'block';
+}
+
+function showAuthenticationError() {
+    const errorElement = document.getElementById('api-error');
+    if (!errorElement) return;
+    
+    errorElement.innerHTML = 
+`<strong>🔑 Erreur d'authentification</strong><br><br>
+L'accès à l'API CTFd a été refusé. Cela peut être dû à :<br><br>
+<strong>Causes possibles :</strong><br>
+1. <strong>Token invalide :</strong> Vérifiez que votre token API est correct<br>
+2. <strong>Token expiré :</strong> Régénérez un nouveau token dans CTFd<br>
+3. <strong>Permissions insuffisantes :</strong> Votre compte n'a pas les droits API<br>
+4. <strong>URL incorrecte :</strong> Vérifiez l'URL de votre instance CTFd<br><br>
+<strong>💡 Comment corriger :</strong><br>
+• Allez dans <em>Settings → API Key</em> dans CTFd<br>
+• Créez/régénérez votre token API<br>
+• Copiez le token complet (commence par <code>ctf_</code>)<br>
+• Vérifiez que l'URL CTFd est accessible<br><br>
+<button class="demo-btn" onclick="document.getElementById('api-token').focus()">🔑 Modifier le token</button>
+<button class="demo-btn" onclick="document.getElementById('ctfd-url').focus()">🌐 Modifier l'URL</button>`;
     
     errorElement.style.display = 'block';
 }
