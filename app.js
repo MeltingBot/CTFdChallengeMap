@@ -2011,6 +2011,33 @@ async function authenticateWithCTFd(ctfdUrl, token) {
     }
 }
 
+/**
+ * Determine if an API error is expected and should not spam logs
+ */
+function isExpectedApiError(url, status) {
+    // 403 errors that are expected
+    if (status === 403) {
+        return (
+            url.includes('/api/v1/admin/') ||           // Admin endpoints when not admin
+            url.includes('/api/v1/configs') ||          // Config access often restricted
+            url.includes('/requirements') ||            // Requirements endpoint often restricted
+            url.includes('view=admin')                  // Admin view parameters
+        );
+    }
+    
+    // 404 errors that are expected  
+    if (status === 404) {
+        return (
+            url.includes('/api/v1/admin/statistics') || // Not all CTFd versions have this
+            url.includes('/api/v1/admin/') ||           // Admin endpoints may not exist
+            url.includes('/requirements') ||            // Requirements feature may not be available
+            url.includes('view=admin')                  // Admin views may not be available
+        );
+    }
+    
+    return false;
+}
+
 async function callCTFdAPI(endpoint, method = 'GET', data = null) {
     // Si on utilise le proxy local, modifier l'URL
     let url;
@@ -2061,7 +2088,14 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
         const response = await fetch(url, options);
         
         if (!response.ok) {
-            console.error('Erreur HTTP:', response.status, 'pour', url);
+            // Gestion contextuelle des erreurs pour éviter le spam de logs
+            const isExpectedError = isExpectedApiError(url, response.status);
+            
+            if (isExpectedError) {
+                debugLog(`Expected API error: ${response.status} for ${url}`);
+            } else {
+                console.error('Erreur HTTP:', response.status, 'pour', url);
+            }
             
             // Essayer de lire le corps de la réponse pour plus de détails
             let errorDetails = '';
