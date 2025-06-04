@@ -542,6 +542,24 @@ async function loadChallengeSolves(challengeId) {
                     const unlockTime = findChallengeUnlockTime(teamName, challengeId);
                     if (unlockTime) {
                         solveData[0].timeFromUnlock = solveDate - unlockTime;
+                        
+                        // Debug pour identifier les temps négatifs
+                        if (solveData[0].timeFromUnlock < 0) {
+                            console.warn(`⚠️ Temps de résolution négatif détecté (mode joueur):`, {
+                                team: teamName,
+                                challenge: challengeId,
+                                challengeName: challenge.name,
+                                solveDate: solveDate,
+                                unlockTime: unlockTime,
+                                difference: solveData[0].timeFromUnlock,
+                                solveDateFormatted: solveDate.toISOString(),
+                                unlockTimeFormatted: unlockTime.toISOString()
+                            });
+                            
+                            // Protection : utiliser un temps minimum de 1 minute si négatif
+                            solveData[0].timeFromUnlock = Math.max(solveData[0].timeFromUnlock, 60000); // 1 minute minimum
+                        }
+                        
                         solveData[0].timeFromUnlockStr = formatTimeDiffDetailed(solveData[0].timeFromUnlock);
                     }
                     
@@ -633,6 +651,24 @@ async function loadChallengeSolves(challengeId) {
             const unlockTime = findChallengeUnlockTime(teamSolve.teamName, challengeId);
             if (unlockTime) {
                 timeFromUnlock = teamSolve.date - unlockTime;
+                
+                // Debug pour identifier les temps négatifs
+                if (timeFromUnlock < 0) {
+                    console.warn(`⚠️ Temps de résolution négatif détecté (mode admin):`, {
+                        team: teamSolve.teamName,
+                        challenge: challengeId,
+                        challengeName: challenge.name,
+                        solveDate: teamSolve.date,
+                        unlockTime: unlockTime,
+                        difference: timeFromUnlock,
+                        solveDateFormatted: new Date(teamSolve.date).toISOString(),
+                        unlockTimeFormatted: unlockTime.toISOString()
+                    });
+                    
+                    // Protection : utiliser un temps minimum de 1 minute si négatif
+                    timeFromUnlock = Math.max(timeFromUnlock, 60000); // 1 minute minimum
+                }
+                
                 timeFromUnlockStr = formatTimeDiffDetailed(timeFromUnlock);
             }
             
@@ -771,10 +807,16 @@ function findChallengeUnlockTime(teamName, challengeId) {
             return null;
         }
         
-        if (!depProgress.date) continue;
+        if (!depProgress.date) {
+            debugLog(`⚠️ Pas de date pour la dépendance ${depId} de l'équipe ${teamName}`);
+            continue;
+        }
         
         const depDate = new Date(depProgress.date);
-        if (isNaN(depDate.getTime())) continue;
+        if (isNaN(depDate.getTime())) {
+            console.warn(`⚠️ Date invalide pour la dépendance ${depId}: ${depProgress.date}`);
+            continue;
+        }
         
         if (!latestDependencyDate || depDate > latestDependencyDate) {
             latestDependencyDate = depDate;
@@ -980,10 +1022,16 @@ function truncateText(text, maxLength) {
 
 // Format détaillé pour la modale
 function formatTimeDiffDetailed(ms) {
-    // Protection contre les temps négatifs
+    // Protection contre les temps négatifs (ne devrait plus arriver avec les corrections amont)
     if (ms < 0) {
-        debugLog(`⚠️ Temps négatif dans formatTimeDiffDetailed: ${ms}ms`);
+        console.warn(`⚠️ Temps négatif non corrigé en amont dans formatTimeDiffDetailed: ${ms}ms`);
         return "< 1m"; // Afficher un temps minimal
+    }
+    
+    // Protection contre les temps très courts (moins de 10 secondes = probablement une erreur de données)
+    if (ms < 10000) {
+        debugLog(`⚠️ Temps très court détecté: ${ms}ms, probable erreur de données`);
+        return "< 10s";
     }
     
     const seconds = Math.floor(ms / 1000);
