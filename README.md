@@ -72,6 +72,7 @@ python -m http.server 8000
 ### Navigation dans l'interface
 - **Sélection d'équipes**: Cochez/décochez les équipes dans la sidebar gauche
 - **Contrôles de vue**: Utilisez les boutons en haut à droite (Vue générale, Parcours, Heatmap)
+- **Filtrage de challenges**: Bouton "🔍 Filtres" pour filtrer les challenges affichés
 - **Navigation**: Zoom avec la molette, déplacement par glisser-déposer
 - **Challenges**: Cliquez pour voir les détails, glissez pour repositionner
 - **Informations**: Bouton "À propos" pour les crédits et fonctionnalités
@@ -93,6 +94,17 @@ python -m http.server 8000
    - **Gris** : Non résolus par les équipes sélectionnées
 4. Survolez pour voir les temps détaillés
 
+#### Mode Filtrage 🔍
+1. Cliquez sur "🔍 Filtres" dans les contrôles
+2. Utilisez les filtres disponibles :
+   - **🔎 Recherche** : Filtrez par nom de challenge
+   - **📂 Catégories** : Sélectionnez les catégories à afficher
+   - **⭐ Difficulté** : Définissez une plage de points
+   - **🎯 Statut** : Choisissez les statuts (résolu, tenté, disponible, verrouillé)
+3. Cliquez "Appliquer" pour filtrer les challenges
+4. Les challenges non sélectionnés apparaissent en transparence
+5. Utilisez "Reset" pour effacer tous les filtres
+
 ## Fonctionnalités
 
 ### Interface principale
@@ -101,11 +113,13 @@ python -m http.server 8000
 - 👥 **Vue multi-équipes** pour les administrateurs
 - 📈 **Statistiques en temps réel** et informations détaillées
 - 🎨 **Interface moderne** et responsive avec D3.js
+- 🔍 **Système de filtrage avancé** pour se concentrer sur des challenges spécifiques
 
 ### Modes de visualisation
 - 📊 **Vue générale**: Affichage standard avec statuts des challenges
 - 🛤️ **Mode Parcours**: Visualisation chronologique du chemin des équipes
 - 🔥 **Heatmap**: Analyse des temps de résolution pour identifier les challenges bloquants
+- 🔍 **Mode Filtrage**: Système avancé pour masquer/afficher des challenges spécifiques
 
 ### Fonctionnalités avancées
 - 🎨 **Couleurs distinctes** pour les équipes (jusqu'à 16 couleurs prédéfinies)
@@ -127,6 +141,15 @@ python -m http.server 8000
 - 📊 **Analyse de difficulté** relative pour optimiser les CTFs
 - 🔒 **Challenges gris** pour les non-résolus (aucune donnée)
 
+### Système de filtrage
+- 🔎 **Recherche textuelle** dans les noms de challenges
+- 📂 **Filtrage par catégories** avec sélection multiple
+- ⭐ **Plage de difficulté** en points personnalisable
+- 🎯 **Filtrage par statut** (résolu, tenté, disponible, verrouillé)
+- 👁️ **Affichage en transparence** des challenges filtrés
+- ♻️ **Reset rapide** pour effacer tous les filtres
+- 🏷️ **Affichage des filtres actifs** avec indicateurs visuels
+
 ## Cas d'usage
 
 ### Pour les organisateurs de CTF
@@ -134,12 +157,16 @@ python -m http.server 8000
 - **🛤️ Suivi des équipes**: Mode Parcours pour voir les stratégies de résolution
 - **⚖️ Équilibrage**: Ajustez la difficulté en analysant les temps de résolution
 - **📈 Métriques**: Statistiques détaillées par équipe et par challenge
+- **🔍 Filtrage ciblé**: Analysez des catégories ou difficultés spécifiques
+- **🎯 Focus sur problèmes**: Filtrez les challenges non résolus pour identifier les blocages
 
 ### Pour les participants
 - **🎯 Stratégie d'équipe**: Visualisez votre progression vs autres équipes
 - **📊 Performance**: Analysez vos temps de résolution
 - **🗺️ Navigation**: Vue claire des dépendances entre challenges
 - **📈 Suivi temps réel**: Progression live pendant la compétition
+- **🔍 Focus catégories**: Filtrez par vos spécialités (Web, Crypto, etc.)
+- **⭐ Gestion difficulté**: Masquez les challenges trop difficiles ou trop faciles
 
 ### Pour les éducateurs
 - **👨‍🏫 Pédagogie**: Montrez visuellement la progression d'apprentissage
