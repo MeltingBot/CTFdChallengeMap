@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-06-04T20:43:22.997Z",
+  "version": "1.0.0",
+  "files": {
+    "app.js": {
+      "original": 227582,
+      "minified": 88102,
+      "reduction": "61.3%"
+    },
+    "app-d3.js": {
+      "original": 63479,
+      "minified": 28887,
+      "reduction": "54.5%"
+    }
+  },
+  "stats": {
+    "originalSize": 291061,
+    "minifiedSize": 116989,
+    "totalReduction": "59.8%"
+  }
+}
