@@ -916,7 +916,7 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                 </div>
                 ${averageTime > 0 ? `
                     <div style="text-align: right;">
-                        <div style="font-size: 12px; color: #0c4a6e;">Temps moyen depuis le précédent chall</div>
+                        <div style="font-size: 12px; color: #0c4a6e;">Temps moyen entre challenges</div>
                         <div style="font-size: 16px; font-weight: 600; color: #0369a1;">${formatTimeDiff(averageTime)}</div>
                     </div>
                 ` : ''}
@@ -957,7 +957,7 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                                           border-radius: 6px; 
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
-                                    <div style="font-size: 10px; color: #92400e; font-weight: 500;">Temps total CTF</div>
+                                    <div style="font-size: 10px; color: #92400e; font-weight: 500;">Temps écoulé dans le CTF</div>
                                     <div style="font-size: 14px; color: #78350f; font-weight: 600;">${solve.relativeTimeStr}</div>
                                 </div>
                             ` : ''}
@@ -967,7 +967,7 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                                           border-radius: 6px; 
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
-                                    <div style="font-size: 10px; color: #6b21a8; font-weight: 500;">Temps de résolution</div>
+                                    <div style="font-size: 10px; color: #6b21a8; font-weight: 500;">Temps pour résoudre (depuis déblocage)</div>
                                     <div style="font-size: 14px; color: #581c87; font-weight: 600;">${solve.timeFromUnlockStr}</div>
                                 </div>
                             ` : ''}
@@ -977,7 +977,7 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                                           border-radius: 6px; 
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
-                                    <div style="font-size: 10px; color: #1e40af; font-weight: 500;">Pause depuis dernier</div>
+                                    <div style="font-size: 10px; color: #1e40af; font-weight: 500;">Temps depuis challenge précédent</div>
                                     <div style="font-size: 14px; color: #1e3a8a; font-weight: 600;">${solve.timeFromPrevChallStr}</div>
                                 </div>
                             ` : ''}
