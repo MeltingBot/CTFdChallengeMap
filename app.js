@@ -23,8 +23,8 @@ const DEBUG_ENABLED = new URLSearchParams(window.location.search).get('debug') =
                      (typeof process !== 'undefined' && process.env && process.env.CTFDMAP_DEBUG === 'true');
 
 // Fonctions de debug conditionnelles
-const debugLog = (...args) => DEBUG_ENABLED && debugLog(...args);
-const debugWarn = (...args) => DEBUG_ENABLED && debugWarn(...args);
+const debugLog = (...args) => DEBUG_ENABLED && console.log(...args);
+const debugWarn = (...args) => DEBUG_ENABLED && console.warn(...args);
 const debugError = (...args) => console.error(...args); // Les erreurs sont toujours affichées
 
 /**
@@ -1780,11 +1780,22 @@ async function validateCTFdConnectivity(url) {
             url = 'https://' + url;
         }
         
+        // Configurer le proxy avec la nouvelle URL AVANT de tester
+        try {
+            await fetch('/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ctfdUrl: url })
+            });
+        } catch (e) {
+            // Ignorer si le proxy n'est pas disponible
+        }
+        
         // Essayer de contacter l'endpoint de base
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
         
-        const response = await fetch(`${url}/api/v1/config`, {
+        const response = await fetch(`/`, {
             method: 'GET',
             signal: controller.signal,
             mode: 'cors'
@@ -1793,8 +1804,7 @@ async function validateCTFdConnectivity(url) {
         clearTimeout(timeoutId);
         
         if (response.ok) {
-            const data = await response.json();
-            debugLog('✅ CTFd accessible:', data);
+            debugLog('✅ CTFd accessible: HTTP', response.status);
             return { success: true, message: 'CTFd accessible' };
         } else {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -2079,7 +2089,7 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
     });
     
     // Vérifier si on doit utiliser le proxy ou un appel direct
-    const isLocalProxy = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000';
+    const isLocalProxy = true; // Toujours utiliser le proxy
     
     if (isLocalProxy) {
         // Utiliser le proxy (qui est maintenant dynamique)
@@ -2098,7 +2108,8 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
             'Content-Type': 'application/json',
         },
         mode: 'cors', // Explicitement demander CORS
-        credentials: 'omit' // Ne pas envoyer de cookies
+        credentials: 'omit', // Ne pas envoyer de cookies
+        redirect: 'manual' // Ne pas suivre les redirections automatiquement
     };
     
     debugLog('🌐 API CALL:', url, 'avec token:', currentUser.token ? 'Oui' : 'Non');
@@ -2114,6 +2125,15 @@ async function callCTFdAPI(endpoint, method = 'GET', data = null) {
     
     try {
         const response = await fetch(url, options);
+        
+        // Traiter les redirections manuellement
+        if (response.type === 'opaqueredirect' || response.status === 0) {
+            // C'est une redirection, probablement vers login
+            const error = new Error('HTTP 302: Redirection vers login');
+            error.status = 302;
+            error.details = 'TOKEN_AUTH_NOT_SUPPORTED';
+            throw error;
+        }
         
         if (!response.ok) {
             // Gestion contextuelle des erreurs pour éviter le spam de logs
