@@ -27,6 +27,34 @@ const debugLog = (...args) => DEBUG_ENABLED && console.log(...args);
 const debugWarn = (...args) => DEBUG_ENABLED && console.warn(...args);
 const debugError = (...args) => console.error(...args); // Les erreurs sont toujours affichées
 
+// Échappement HTML pour toute donnée non-fiable injectée via innerHTML / template literals.
+// À utiliser systématiquement sur les noms d'équipes, de challenges, catégories,
+// messages d'erreur API, et toute chaîne provenant de CTFd ou de l'utilisateur.
+function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/`/g, '&#96;');
+}
+// Variante pour les chaînes injectées dans un littéral JS entre apostrophes (ex: onclick="f('${x}')").
+// Les inline handlers restent à éviter, mais tant qu'ils existent on doit au moins neutraliser ' " \ et </script>.
+function escapeJsString(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/</g, '\\x3c');
+}
+window.escapeHtml = escapeHtml;
+window.escapeJsString = escapeJsString;
+
 /**
  * Generate distinct colors for teams using golden ratio distribution
  * This ensures maximum visual separation between team colors
@@ -456,10 +484,10 @@ async function showChallengeSolvesModal(challengeId) {
     
     modalContent.innerHTML = `
         <button onclick="closeChallengeModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 20px; cursor: pointer;">✕</button>
-        <h2 style="margin-bottom: 16px; font-size: 20px;">📊 ${challenge.name}</h2>
+        <h2 style="margin-bottom: 16px; font-size: 20px;">📊 ${escapeHtml(challenge.name)}</h2>
         <div style="margin-bottom: 20px; color: #6b7280; font-size: 14px;">
-            <span style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; margin-right: 8px;">${challenge.category}</span>
-            <span>${challenge.points} points</span>
+            <span style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; margin-right: 8px;">${escapeHtml(challenge.category)}</span>
+            <span>${Number(challenge.points) || 0} points</span>
         </div>
         <div id="solves-loading" style="text-align: center; padding: 40px;">
             <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
@@ -723,7 +751,7 @@ async function loadChallengeSolves(challengeId) {
             document.getElementById('solves-loading').innerHTML = `
                 <div style="color: #ef4444;">❌ Erreur de chargement</div>
                 <div style="font-size: 12px; margin-top: 8px; color: #dc2626;">
-                    ${error.message || 'Erreur inconnue'}
+                    ${escapeHtml(error.message || 'Erreur inconnue')}
                 </div>
                 <div style="font-size: 11px; margin-top: 8px; color: #7f1d1d;">
                     Vérifiez la console pour plus de détails
@@ -938,16 +966,16 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                                            color: #374151;">
                                     #${solve.place}
                                 </span>
-                                <div style="width: 16px; height: 16px; background: ${solve.teamColor}; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.2);"></div>
-                                <span style="font-weight: 600; font-size: 16px; color: #111827;">${solve.team}</span>
+                                <div style="width: 16px; height: 16px; background: ${escapeHtml(solve.teamColor)}; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.2);"></div>
+                                <span style="font-weight: 600; font-size: 16px; color: #111827;">${escapeHtml(solve.team)}</span>
                                 ${solve.attempts > 1 ? `
                                     <span style="background: #fee2e2; color: #dc2626; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500;">
-                                        ${solve.attempts - 1} fail${solve.attempts > 2 ? 's' : ''}
+                                        ${Number(solve.attempts) - 1} fail${solve.attempts > 2 ? 's' : ''}
                                     </span>
                                 ` : ''}
                             </div>
                             <div style="font-size: 14px; color: #6b7280;">
-                                📅 ${solve.dateStr}
+                                📅 ${escapeHtml(solve.dateStr)}
                             </div>
                         </div>
                         <div style="text-align: right; min-width: 160px;">
@@ -958,7 +986,7 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
                                     <div style="font-size: 10px; color: #92400e; font-weight: 500;">Temps écoulé dans le CTF</div>
-                                    <div style="font-size: 14px; color: #78350f; font-weight: 600;">${solve.relativeTimeStr}</div>
+                                    <div style="font-size: 14px; color: #78350f; font-weight: 600;">${escapeHtml(solve.relativeTimeStr)}</div>
                                 </div>
                             ` : ''}
                             ${solve.timeFromUnlockStr ? `
@@ -968,7 +996,7 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
                                     <div style="font-size: 10px; color: #6b21a8; font-weight: 500;">Temps pour résoudre (depuis déblocage)</div>
-                                    <div style="font-size: 14px; color: #581c87; font-weight: 600;">${solve.timeFromUnlockStr}</div>
+                                    <div style="font-size: 14px; color: #581c87; font-weight: 600;">${escapeHtml(solve.timeFromUnlockStr)}</div>
                                 </div>
                             ` : ''}
                             ${solve.timeFromPrevChallStr ? `
@@ -978,7 +1006,7 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
                                     <div style="font-size: 10px; color: #1e40af; font-weight: 500;">Temps depuis challenge précédent</div>
-                                    <div style="font-size: 14px; color: #1e3a8a; font-weight: 600;">${solve.timeFromPrevChallStr}</div>
+                                    <div style="font-size: 14px; color: #1e3a8a; font-weight: 600;">${escapeHtml(solve.timeFromPrevChallStr)}</div>
                                 </div>
                             ` : ''}
                             ${solve.timeDiffStr && solve.place > 1 ? `
@@ -987,7 +1015,7 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                                           border-radius: 6px; 
                                           padding: 4px 8px;">
                                     <div style="font-size: 10px; color: #047857; font-weight: 500;">Δ équipe préc.</div>
-                                    <div style="font-size: 14px; color: #065f46; font-weight: 600;">+${solve.timeDiffStr}</div>
+                                    <div style="font-size: 14px; color: #065f46; font-weight: 600;">+${escapeHtml(solve.timeDiffStr)}</div>
                                 </div>
                             ` : ''}
                         </div>
@@ -1728,7 +1756,7 @@ function showCORSInstructions() {
 
 function showError(message) {
     const errorElement = document.getElementById('api-error');
-    errorElement.innerHTML = `<strong>Erreur :</strong> ${message}`;
+    errorElement.innerHTML = `<strong>Erreur :</strong> ${escapeHtml(message)}`;
     errorElement.style.display = 'block';
 }
 
@@ -1764,9 +1792,10 @@ function loadTeamsList() {
     
     if (teamSelect) {
         teamSelect.innerHTML = '<option value="">Sélectionner une équipe...</option>';
-        demoTeams.forEach(team => {
-            teamSelect.innerHTML += `<option value="${team}">${team}</option>`;
-        });
+        teamSelect.insertAdjacentHTML(
+            'beforeend',
+            demoTeams.map(team => `<option value="${escapeHtml(team)}">${escapeHtml(team)}</option>`).join('')
+        );
     }
 }
 
@@ -2915,7 +2944,20 @@ function generateTeamFilters(searchTerm = '') {
     }
     
     const container = document.getElementById('team-filters');
-    
+
+    // Listener délégué attaché une seule fois sur le conteneur : survit aux ré-renders innerHTML
+    // et évite d'injecter team.name dans un handler inline (CSP-friendly).
+    if (container && !container.dataset.toggleListenerAttached) {
+        container.addEventListener('change', (e) => {
+            const input = e.target;
+            if (input && input.matches && input.matches('input.team-checkbox-input')) {
+                const teamName = input.dataset.teamName;
+                if (teamName) toggleTeam(teamName, input);
+            }
+        });
+        container.dataset.toggleListenerAttached = 'true';
+    }
+
     // Ajouter barre de recherche et filtres si pas déjà présents
     let searchBar = document.getElementById('team-search-container');
     if (!searchBar) {
@@ -3059,12 +3101,16 @@ function generateTeamFilters(searchTerm = '') {
         const isFirstResult = searchTerm && filteredTeams[0] === team;
         const highlightStyle = isFirstResult ? 'background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 4px; margin: 1px;' : '';
         
+        const titleParts = [];
+        if (team.hidden) titleParts.push('Équipe cachée');
+        if (team.banned) titleParts.push('Équipe bannie');
+        if (isFirstResult) titleParts.push('Appuyez sur Entrée pour sélectionner');
         return `
-            <label class="team-checkbox" style="${teamStyle}${highlightStyle}" title="${team.hidden ? 'Équipe cachée' : ''}${team.banned ? 'Équipe bannie' : ''}${isFirstResult ? ' - Appuyez sur Entrée pour sélectionner' : ''}">
-                <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleTeam('${team.name}', this)">
-                <div class="team-color" style="background: ${team.color};"></div>
-                <span class="team-name">${team.name}${statusIndicator}${isFirstResult ? ' 🎯' : ''}</span>
-                <span class="team-progress">${progressText}</span>
+            <label class="team-checkbox" style="${teamStyle}${highlightStyle}" title="${escapeHtml(titleParts.join(' - '))}">
+                <input type="checkbox" class="team-checkbox-input" data-team-name="${escapeHtml(team.name)}" ${isChecked ? 'checked' : ''}>
+                <div class="team-color" style="background: ${escapeHtml(team.color)};"></div>
+                <span class="team-name">${escapeHtml(team.name)}${statusIndicator}${isFirstResult ? ' 🎯' : ''}</span>
+                <span class="team-progress">${escapeHtml(progressText)}</span>
             </label>
         `;
     }).join('');
@@ -3594,16 +3640,16 @@ function generateChallengeMap() {
                         else if (progress?.attempted) dotColor = '#f59e0b';
                         else if (progress?.locked) dotColor = '#9ca3af';
                         
-                        return `<div class="team-mini-dot" style="background: ${dotColor};" title="${teamName}"></div>`;
+                        return `<div class="team-mini-dot" style="background: ${escapeHtml(dotColor)};" title="${escapeHtml(teamName)}"></div>`;
                     }).join('')}
                 </div>
             `;
         }
         
         node.innerHTML = `
-            <div class="challenge-name">${truncateText(challengeInfo.name, 18)}</div>
-            <div class="challenge-category">${truncateText(challengeInfo.category || 'General', 16)}</div>
-            <div class="challenge-points">${challengeInfo.points} pts</div>
+            <div class="challenge-name">${escapeHtml(truncateText(challengeInfo.name, 18))}</div>
+            <div class="challenge-category">${escapeHtml(truncateText(challengeInfo.category || 'General', 16))}</div>
+            <div class="challenge-points">${Number(challengeInfo.points) || 0} pts</div>
             <div class="challenge-status">${statusIcon}</div>
             ${teamIndicators}
         `;
@@ -3854,18 +3900,18 @@ function showTooltip(event, challengeId) {
     if (!userPermissions.canViewAllTeams) {
         const progress = getTeamProgress(currentUser.teamName, challengeId);
         
-        let content = `<strong>${challengeInfo.name}</strong><br>Points: ${challengeInfo.points}<br><br>`;
-        
+        let content = `<strong>${escapeHtml(challengeInfo.name)}</strong><br>Points: ${Number(challengeInfo.points) || 0}<br><br>`;
+
         if (progress?.solved) {
             const failures = Math.max(0, (progress.attempts || 1) - 1);
-            content += `✅ <strong>Résolu !</strong><br>Temps: ${progress.timeSpent}min<br>Tentatives: ${progress.attempts || 1}`;
+            content += `✅ <strong>Résolu !</strong><br>Temps: ${Number(progress.timeSpent) || 0}min<br>Tentatives: ${Number(progress.attempts) || 1}`;
             if (failures > 0) content += `<br>Échecs: ${failures}`;
         } else if (progress?.attempted) {
-            content += `⚠️ <strong>Tenté</strong><br>Temps: ${progress.timeSpent}min<br>Tentatives: ${progress.attempts || 1}<br>Échecs: ${progress.attempts || 1}`;
+            content += `⚠️ <strong>Tenté</strong><br>Temps: ${Number(progress.timeSpent) || 0}min<br>Tentatives: ${Number(progress.attempts) || 1}<br>Échecs: ${Number(progress.attempts) || 1}`;
         } else {
             content += `📝 <strong>Disponible</strong><br>Prêt à être tenté`;
         }
-        
+
         tooltip.innerHTML = content;
     } else {
         // Mode admin : affichage complet
@@ -3876,24 +3922,24 @@ function showTooltip(event, challengeId) {
             getTeamProgress(team, challengeId)?.attempted && !getTeamProgress(team, challengeId)?.solved
         );
         
-        let content = `<strong>${challengeInfo.name}</strong><br>Points: ${challengeInfo.points}<br><br>`;
-        
+        let content = `<strong>${escapeHtml(challengeInfo.name)}</strong><br>Points: ${Number(challengeInfo.points) || 0}<br><br>`;
+
         if (solvedTeams.length > 0) {
             content += `✅ <strong>Résolu par:</strong><br>`;
             solvedTeams.forEach(team => {
                 const progress = getTeamProgress(team, challengeId);
-                content += `• ${team} (${progress.timeSpent}min, ${progress.attempts || 1} tent.)<br>`;
+                content += `• ${escapeHtml(team)} (${Number(progress.timeSpent) || 0}min, ${Number(progress.attempts) || 1} tent.)<br>`;
             });
         }
-        
+
         if (attemptedTeams.length > 0) {
             content += `<br>⚠️ <strong>Tenté par:</strong><br>`;
             attemptedTeams.forEach(team => {
                 const progress = getTeamProgress(team, challengeId);
-                content += `• ${team} (${progress.timeSpent}min, ${progress.attempts || 1} tent.)<br>`;
+                content += `• ${escapeHtml(team)} (${Number(progress.timeSpent) || 0}min, ${Number(progress.attempts) || 1} tent.)<br>`;
             });
         }
-        
+
         tooltip.innerHTML = content;
     }
     
@@ -5724,13 +5770,13 @@ function updateActiveFiltersDisplay() {
     
     // Search
     if (currentFilters.search) {
-        activeTags.push(`🔎 "${currentFilters.search}"`);
+        activeTags.push(`🔎 "${escapeHtml(currentFilters.search)}"`);
     }
-    
+
     // Categories
     if (currentFilters.categories.size > 0) {
         currentFilters.categories.forEach(cat => {
-            activeTags.push(`📂 ${cat}`);
+            activeTags.push(`📂 ${escapeHtml(cat)}`);
         });
     }
     

@@ -4,10 +4,17 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Build output (optional - uncomment to exclude minified files from git)
-# *.min.js
-# index.prod.html
-# build-info.json
+# Build output
+*.min.js
+index.prod.html
+build-info.json
+
+# Go binary built from proxy.go
+ctfd-proxy
+
+# Claude Code project notes (local)
+CLAUDE.md
+.claude/
 
 # Environment files
 .env
