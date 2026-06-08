@@ -10,12 +10,16 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 var (
-	port         = flag.String("port", "3000", "Port to listen on")
-	ctfdURL      = flag.String("ctfd-url", "", "CTFd instance URL (can also use CTFD_URL env var)")
+	port    = flag.String("port", "3000", "Port to listen on")
+	host    = flag.String("host", "127.0.0.1", "Interface to bind to (use 0.0.0.0 to expose on LAN)")
+	ctfdURL = flag.String("ctfd-url", "", "CTFd instance URL (can also use CTFD_URL env var)")
+
+	proxyMu      sync.RWMutex
 	currentURL   string
 	currentProxy *httputil.ReverseProxy
 )
@@ -35,28 +39,55 @@ type HealthResponse struct {
 	Timestamp string `json:"timestamp"`
 }
 
+// validateTargetURL ensures the URL is a well-formed http(s) URL with a host.
+func validateTargetURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("scheme must be http or https")
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("missing host")
+	}
+	return u, nil
+}
+
 // createProxy creates a new reverse proxy for the given URL
 func createProxy(targetURL string) (*httputil.ReverseProxy, error) {
-	target, err := url.Parse(targetURL)
+	target, err := validateTargetURL(targetURL)
 	if err != nil {
 		return nil, err
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	
-	// Modify the director to handle the path correctly
+
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
 		req.Host = target.Host
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
-		
+
 		// Remove Origin header to avoid CORS issues
 		req.Header.Del("Origin")
 	}
-	
+
 	return proxy, nil
+}
+
+func getProxy() (*httputil.ReverseProxy, string) {
+	proxyMu.RLock()
+	defer proxyMu.RUnlock()
+	return currentProxy, currentURL
+}
+
+func setProxy(p *httputil.ReverseProxy, u string) {
+	proxyMu.Lock()
+	defer proxyMu.Unlock()
+	currentProxy = p
+	currentURL = u
 }
 
 func main() {
@@ -71,91 +102,96 @@ func main() {
 		targetURL = "https://demo.ctfd.io"
 	}
 
-	// Initialize current URL and proxy
-	currentURL = targetURL
-	var err error
-	currentProxy, err = createProxy(currentURL)
+	p, err := createProxy(targetURL)
 	if err != nil {
 		log.Fatalf("Invalid CTFd URL: %v", err)
 	}
+	setProxy(p, targetURL)
 
-	// Create file server for static files
 	fs := http.FileServer(http.Dir("."))
 
-	// Main handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Log the request
 		log.Printf("%s %s", r.Method, r.URL.Path)
 
-		// Handle /health endpoint
+		// Security headers (mêmes valeurs que proxy-server.js)
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; "+
+				"connect-src 'self'; "+
+				"font-src 'self' data:; "+
+				"object-src 'none'; "+
+				"base-uri 'self'; "+
+				"frame-ancestors 'none'; "+
+				"form-action 'self'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
 		if r.URL.Path == "/health" {
+			_, target := getProxy()
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(HealthResponse{
 				Status:    "ok",
 				Proxy:     "running",
-				Target:    currentURL,
+				Target:    target,
 				Timestamp: time.Now().Format(time.RFC3339),
 			})
 			return
 		}
 
-		// Handle /config endpoint
 		if r.URL.Path == "/config" {
 			if r.Method == "GET" {
-				// Return current configuration
+				_, target := getProxy()
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(Config{CTFdURL: currentURL})
+				json.NewEncoder(w).Encode(Config{CTFdURL: target})
 				return
 			} else if r.Method == "POST" {
-				// Update configuration
 				var update ConfigUpdate
 				if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 					http.Error(w, "Invalid JSON", http.StatusBadRequest)
 					return
 				}
-				
+
 				if update.CTFdURL == "" {
 					http.Error(w, "URL CTFd invalide", http.StatusBadRequest)
 					return
 				}
-				
-				// Create new proxy with the new URL
+
 				newProxy, err := createProxy(update.CTFdURL)
 				if err != nil {
 					http.Error(w, "URL CTFd invalide: "+err.Error(), http.StatusBadRequest)
 					return
 				}
-				
-				// Update current URL and proxy
-				currentURL = update.CTFdURL
-				currentProxy = newProxy
-				log.Printf("URL CTFd mise à jour: %s", currentURL)
-				
+
+				setProxy(newProxy, update.CTFdURL)
+				log.Printf("URL CTFd mise à jour: %s", update.CTFdURL)
+
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"success": true,
-					"ctfdUrl": currentURL,
+					"ctfdUrl": update.CTFdURL,
 				})
 				return
 			}
 		}
 
-		// Handle /api/* requests - proxy to CTFd
 		if strings.HasPrefix(r.URL.Path, "/api") {
-			// Use current proxy
-			currentProxy.ServeHTTP(w, r)
+			p, _ := getProxy()
+			p.ServeHTTP(w, r)
 			return
 		}
 
-		// Serve static files
 		fs.ServeHTTP(w, r)
 	})
 
-	// Start server
-	addr := fmt.Sprintf(":%s", *port)
-	log.Printf("Proxy server started on http://localhost%s", addr)
-	log.Printf("CTFd URL: %s", currentURL)
-	
+	addr := fmt.Sprintf("%s:%s", *host, *port)
+	log.Printf("Proxy server started on http://%s", addr)
+	_, target := getProxy()
+	log.Printf("CTFd URL: %s", target)
+
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
