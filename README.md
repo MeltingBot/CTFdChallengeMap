@@ -10,6 +10,8 @@
 
 Interface de visualisation interactive pour CTFd : carte des challenges avec dépendances, progression des équipes, analyse des temps de résolution. Thème sombre, sans framework — JavaScript vanilla + D3.js (embarqué, fonctionne hors ligne).
 
+![CTF Challenge Map — mode Parcours sur une instance CTFd](screenshot.png)
+
 **Développé par :** Tungst - Oscar Zulu OSINT Crew
 
 ## Installation rapide
