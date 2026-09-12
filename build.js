@@ -50,6 +50,7 @@ const config = {
                 'hideAboutModal',
                 'togglePathAnimation',
                 'changeAnimationSpeed',
+                'exportParcours',
                 'resetChallengePositions',
                 'showCORSInstructions',
                 'showQuickSetup',

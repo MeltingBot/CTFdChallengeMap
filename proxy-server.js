@@ -45,6 +45,7 @@ const STATIC_FILES = new Set([
   'app.min.js',
   'app-d3.js',
   'app-d3.min.js',
+  'd3.v7.min.js',
   'build-info.json',
   'favicon.ico'
 ]);

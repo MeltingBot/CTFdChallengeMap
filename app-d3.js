@@ -1512,6 +1512,45 @@ function animateNextStep() {
 }
 
 /**
+ * Draw a time label at the midpoint of a quadratic bezier path segment.
+ * Shows the elapsed time between the two solves of the segment.
+ */
+function drawPathTimeLabel(sx, sy, mx, my, tx, ty, elapsedMs, teamColor) {
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return null;
+    if (typeof formatTimeDiff !== 'function') return null;
+
+    // Point on the quadratic bezier at t=0.5
+    const lx = sx / 4 + mx / 2 + tx / 4;
+    const ly = sy / 4 + my / 2 + ty / 4;
+
+    const labelGroup = d3Data.pathGroup.append('g')
+        .attr('class', 'path-time-label')
+        .attr('transform', `translate(${lx}, ${ly})`);
+
+    const text = labelGroup.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'central')
+        .attr('font-size', '11px')
+        .attr('font-weight', '600')
+        .attr('fill', teamColor)
+        .text(formatTimeDiff(elapsedMs));
+
+    // Background pill sized to the text
+    const bbox = text.node().getBBox();
+    labelGroup.insert('rect', 'text')
+        .attr('x', bbox.x - 5)
+        .attr('y', bbox.y - 2)
+        .attr('width', bbox.width + 10)
+        .attr('height', bbox.height + 4)
+        .attr('rx', (bbox.height + 4) / 2)
+        .attr('fill', 'rgba(255, 255, 255, 0.9)')
+        .attr('stroke', teamColor)
+        .attr('stroke-width', 1);
+
+    return labelGroup;
+}
+
+/**
  * Draw a single animated path segment
  */
 function drawAnimatedPath(event, teamColor, teamIndex) {
@@ -1582,7 +1621,19 @@ function drawAnimatedPath(event, teamColor, teamIndex) {
         .duration(pathAnimationState.speed * 0.7)
         .ease(d3.easeLinear)
         .attr('stroke-dashoffset', 0);
-    
+
+    // Temps écoulé entre les deux résolutions, affiché une fois la flèche tracée
+    const timeLabel = drawPathTimeLabel(sx, sy, mx, my, tx, ty,
+        event.toSolve.date - event.fromSolve.date, teamColor);
+    if (timeLabel) {
+        timeLabel
+            .attr('opacity', 0)
+            .transition()
+            .delay(pathAnimationState.speed * 0.7)
+            .duration(200)
+            .attr('opacity', 1);
+    }
+
     // Add pulsing effect to destination node
     const destNode = d3Data.nodeGroup.selectAll('.d3-challenge-node')
         .filter(d => d.id === event.toSolve.id);
@@ -1859,6 +1910,7 @@ function updateTeamPathsStatic() {
             pathData.push({
                 source: source,
                 target: target,
+                elapsedMs: solvedChallenges[i + 1].date - solvedChallenges[i].date,
                 index: i
             });
         }
@@ -1908,6 +1960,9 @@ function updateTeamPathsStatic() {
                 .attr('stroke-linecap', 'round')
                 .attr('marker-end', `url(#${markerId})`)
                 .attr('d', pathString);
+
+            // Temps écoulé entre les deux résolutions
+            drawPathTimeLabel(sx, sy, mx, my, tx, ty, d.elapsedMs, teamColor);
         });
     });
 }

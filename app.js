@@ -1471,11 +1471,11 @@ function resetChallengePositions() {
                 console.error('❌ D3 rendering failed:', error);
                 debugLog('🔄 Falling back to legacy rendering');
                 renderChallenges();
-                updateDependencyArrows();
+                drawDependencies();
             }
         } else {
             renderChallenges();
-            updateDependencyArrows();
+            drawDependencies();
         }
     }
 }
@@ -1524,7 +1524,7 @@ function makeChallengeNodeDraggable(element, challengeId) {
         element.style.top = `${newY}px`;
         
         // Update dependency arrows in real-time
-        updateDependencyArrows();
+        drawDependencies();
         
         e.preventDefault();
     };
@@ -3450,9 +3450,10 @@ function setViewMode(mode) {
         window.heatmapMode = false;
         debugLog('🛤️ Mode Parcours activé');
         
-        // Show animation button
+        // Show animation and export buttons
         document.getElementById('animate-btn').style.display = 'inline-block';
-        
+        setParcoursExportButtonsVisible(true);
+
         if (d3SystemReady && window.updateTeamPaths) {
             window.updateTeamPaths();
         }
@@ -3465,9 +3466,10 @@ function setViewMode(mode) {
         window.parcoursMode = false;
         debugLog('🔥 Mode Heatmap activé');
         
-        // Hide animation button
+        // Hide animation and export buttons
         document.getElementById('animate-btn').style.display = 'none';
-        
+        setParcoursExportButtonsVisible(false);
+
         // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
             window.d3Data.pathGroup.selectAll('*').remove();
@@ -3496,9 +3498,10 @@ function setViewMode(mode) {
         window.heatmapMode = false;
         debugLog('🗂️ Mode Overview activé');
         
-        // Hide animation button
+        // Hide animation and export buttons
         document.getElementById('animate-btn').style.display = 'none';
-        
+        setParcoursExportButtonsVisible(false);
+
         // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
             window.d3Data.pathGroup.selectAll('*').remove();
@@ -3521,6 +3524,172 @@ function toggleParcours() {
     } else {
         setViewMode('paths');
     }
+}
+
+function setParcoursExportButtonsVisible(visible) {
+    ['export-md-btn', 'export-json-btn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.style.display = visible ? 'inline-block' : 'none';
+    });
+}
+
+// Construit les données de parcours des équipes sélectionnées :
+// résolutions triées chronologiquement, écarts entre résolutions, cumuls et résumé par équipe.
+function buildParcoursExportData() {
+    const exportTeams = [];
+
+    selectedTeams.forEach(teamName => {
+        const progress = teamProgress[teamName];
+        if (!progress) return;
+
+        const solves = [];
+        Object.entries(progress).forEach(([challengeId, entry]) => {
+            if ((entry.solved === true || entry.status === 'solved') && entry.date) {
+                const challenge = challengeMap[challengeId] || {};
+                solves.push({
+                    challengeId: challengeId,
+                    name: challenge.name || `Challenge ${challengeId}`,
+                    category: challenge.category || 'General',
+                    points: challenge.points || 0,
+                    date: new Date(entry.date)
+                });
+            }
+        });
+        solves.sort((a, b) => a.date - b.date);
+        if (solves.length === 0) return;
+
+        const start = solves[0].date;
+        let cumulativePoints = 0;
+        const byCategory = {};
+        const solveRows = solves.map((solve, i) => {
+            cumulativePoints += solve.points;
+            byCategory[solve.category] = (byCategory[solve.category] || 0) + 1;
+            const sincePreviousMs = i > 0 ? solve.date - solves[i - 1].date : 0;
+            const sinceStartMs = solve.date - start;
+            return {
+                order: i + 1,
+                challengeId: solve.challengeId,
+                name: solve.name,
+                category: solve.category,
+                points: solve.points,
+                date: solve.date.toISOString(),
+                sincePreviousMs: sincePreviousMs,
+                sincePrevious: i > 0 ? formatTimeDiff(sincePreviousMs) : '-',
+                sinceStartMs: sinceStartMs,
+                sinceStart: formatTimeDiff(sinceStartMs),
+                cumulativePoints: cumulativePoints
+            };
+        });
+
+        const end = solves[solves.length - 1].date;
+        const totalDurationMs = end - start;
+        const gaps = solveRows.slice(1).map(r => r.sincePreviousMs);
+        const avgGapMs = gaps.length > 0 ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : 0;
+
+        exportTeams.push({
+            name: teamName,
+            totalSolved: solveRows.length,
+            totalPoints: cumulativePoints,
+            firstSolve: start.toISOString(),
+            lastSolve: end.toISOString(),
+            totalDurationMs: totalDurationMs,
+            totalDuration: formatTimeDiff(totalDurationMs),
+            avgGapMs: avgGapMs,
+            avgGap: gaps.length > 0 ? formatTimeDiff(avgGapMs) : '-',
+            byCategory: byCategory,
+            solves: solveRows
+        });
+    });
+
+    return {
+        type: 'ctfd-map-parcours-export',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        ctfdUrl: currentUser.ctfdUrl || null,
+        teams: exportTeams
+    };
+}
+
+function buildParcoursMarkdown(data) {
+    // Neutralise les valeurs venant du serveur CTFd (noms d'équipes/challenges) :
+    // pas de retour à la ligne (casse les tables), échappement des caractères
+    // de formatage exploitables pour injecter du Markdown (liens, images, code).
+    const esc = (value) => String(value)
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/[|\\`\[\]!]/g, '\\$&');
+    const lines = [];
+    lines.push('# Parcours des équipes');
+    lines.push('');
+    lines.push(`- Exporté le : ${new Date(data.exportedAt).toLocaleString('fr-FR')}`);
+    if (data.ctfdUrl) lines.push(`- Instance CTFd : ${data.ctfdUrl}`);
+    lines.push('');
+
+    if (data.teams.length > 1) {
+        lines.push('## Comparaison des équipes');
+        lines.push('');
+        lines.push('| Équipe | Résolutions | Points | Première résolution | Dernière résolution | Durée totale | Temps moyen entre résolutions |');
+        lines.push('|---|---|---|---|---|---|---|');
+        data.teams.forEach(team => {
+            lines.push(`| ${esc(team.name)} | ${team.totalSolved} | ${team.totalPoints} | ${new Date(team.firstSolve).toLocaleString('fr-FR')} | ${new Date(team.lastSolve).toLocaleString('fr-FR')} | ${team.totalDuration} | ${team.avgGap} |`);
+        });
+        lines.push('');
+    }
+
+    data.teams.forEach(team => {
+        lines.push(`## ${esc(team.name)}`);
+        lines.push('');
+        lines.push(`- **${team.totalSolved}** challenges résolus, **${team.totalPoints}** points`);
+        lines.push(`- Durée totale : ${team.totalDuration} (du ${new Date(team.firstSolve).toLocaleString('fr-FR')} au ${new Date(team.lastSolve).toLocaleString('fr-FR')})`);
+        lines.push(`- Temps moyen entre résolutions : ${team.avgGap}`);
+        lines.push(`- Par catégorie : ${Object.entries(team.byCategory).map(([cat, n]) => `${cat} (${n})`).join(', ')}`);
+        lines.push('');
+        lines.push('| # | Challenge | Catégorie | Points | Résolu le | Δ précédent | Depuis le début | Cumul points |');
+        lines.push('|---|---|---|---|---|---|---|---|');
+        team.solves.forEach(solve => {
+            lines.push(`| ${solve.order} | ${esc(solve.name)} | ${esc(solve.category)} | ${solve.points} | ${new Date(solve.date).toLocaleString('fr-FR')} | ${solve.sincePrevious} | ${solve.sinceStart} | ${solve.cumulativePoints} |`);
+        });
+        lines.push('');
+    });
+
+    return lines.join('\n');
+}
+
+function downloadFile(filename, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+// Exporte le parcours des équipes sélectionnées ('md' ou 'json')
+function exportParcours(format) {
+    if (selectedTeams.length === 0) {
+        alert('Sélectionnez au moins une équipe pour exporter son parcours.');
+        return;
+    }
+
+    const data = buildParcoursExportData();
+    if (data.teams.length === 0) {
+        alert('Aucune résolution datée trouvée pour les équipes sélectionnées.');
+        return;
+    }
+
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const teamSlug = data.teams.length === 1
+        ? data.teams[0].name.replace(/[^a-zA-Z0-9_-]+/g, '_').substring(0, 40)
+        : `${data.teams.length}-equipes`;
+
+    if (format === 'json') {
+        downloadFile(`parcours_${teamSlug}_${stamp}.json`, JSON.stringify(data, null, 2), 'application/json');
+    } else {
+        downloadFile(`parcours_${teamSlug}_${stamp}.md`, buildParcoursMarkdown(data), 'text/markdown');
+    }
+    debugLog(`📤 Parcours exporté (${format}) pour ${data.teams.length} équipe(s)`);
 }
 
 function deselectAllTeams() {

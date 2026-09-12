@@ -6,6 +6,8 @@ yarn-error.log*
 
 # Build output
 *.min.js
+# ...sauf la bibliothèque D3 vendorisée (servie localement pour respecter la CSP)
+!d3.v7.min.js
 index.prod.html
 build-info.json
 

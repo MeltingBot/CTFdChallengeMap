@@ -1,6 +1,6 @@
 {
   "name": "ctfd-map-proxy",
-  "version": "1.0.0",
+  "version": "0.5.0",
   "description": "Proxy server pour CTFd Map",
   "main": "proxy-server.js",
   "scripts": {
