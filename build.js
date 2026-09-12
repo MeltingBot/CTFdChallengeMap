@@ -51,6 +51,8 @@ const config = {
                 'togglePathAnimation',
                 'changeAnimationSpeed',
                 'exportParcours',
+                'togglePlayPause',
+                'stepAnimation',
                 'resetChallengePositions',
                 'showCORSInstructions',
                 'showQuickSetup',

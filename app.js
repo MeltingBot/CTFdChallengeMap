@@ -136,6 +136,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    // Panneaux flottants déplaçables par leur titre
+    makePanelDraggable('heatmap-legend', '.heatmap-legend-title');
+    makePanelDraggable('animation-timeline', '.timeline-header');
 });
 
 /**
@@ -472,7 +476,7 @@ async function showChallengeSolvesModal(challengeId) {
     // Créer le contenu de la modale
     const modalContent = document.createElement('div');
     modalContent.style.cssText = `
-        background: #ffffff;
+        background: var(--surface);
         border-radius: 12px;
         padding: 24px;
         max-width: 600px;
@@ -484,13 +488,13 @@ async function showChallengeSolvesModal(challengeId) {
     
     modalContent.innerHTML = `
         <button onclick="closeChallengeModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 20px; cursor: pointer;">✕</button>
-        <h2 style="margin-bottom: 16px; font-size: 20px;">📊 ${escapeHtml(challenge.name)}</h2>
-        <div style="margin-bottom: 20px; color: #6b7280; font-size: 14px;">
-            <span style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; margin-right: 8px;">${escapeHtml(challenge.category)}</span>
+        <h2 style="margin-bottom: 16px; font-size: 20px;">${escapeHtml(challenge.name)}</h2>
+        <div style="margin-bottom: 20px; color: var(--text-dim); font-size: 14px;">
+            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 4px; margin-right: 8px;">${escapeHtml(challenge.category)}</span>
             <span>${Number(challenge.points) || 0} points</span>
         </div>
         <div id="solves-loading" style="text-align: center; padding: 40px;">
-            <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+            
             <div>Chargement des résolutions...</div>
         </div>
         <div id="solves-content" style="display: none;"></div>
@@ -551,7 +555,7 @@ async function loadChallengeSolves(challengeId) {
                     
                     const solveData = [{
                         team: teamName,
-                        teamColor: team ? team.color : '#6b7280',
+                        teamColor: team ? team.color : '#8b96a5',
                         date: solveDate,
                         dateStr: formatDate(solveDate),
                         place: 1,
@@ -720,7 +724,7 @@ async function loadChallengeSolves(challengeId) {
             
             solvesData.push({
                 team: teamSolve.teamName,
-                teamColor: team ? team.color : '#6b7280',
+                teamColor: team ? team.color : '#8b96a5',
                 date: teamSolve.date,
                 dateStr: formatDate(teamSolve.date),
                 place: index + 1,
@@ -749,11 +753,11 @@ async function loadChallengeSolves(challengeId) {
         } catch (totalError) {
             // If even total solves fails, show error message
             document.getElementById('solves-loading').innerHTML = `
-                <div style="color: #ef4444;">❌ Erreur de chargement</div>
-                <div style="font-size: 12px; margin-top: 8px; color: #dc2626;">
+                <div style="color: var(--danger);">Erreur de chargement</div>
+                <div style="font-size: 12px; margin-top: 8px; color: var(--danger);">
                     ${escapeHtml(error.message || 'Erreur inconnue')}
                 </div>
-                <div style="font-size: 11px; margin-top: 8px; color: #7f1d1d;">
+                <div style="font-size: 11px; margin-top: 8px; color: var(--text-faint);">
                     Vérifiez la console pour plus de détails
                 </div>
             `;
@@ -904,14 +908,14 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
     if (solvesData.length === 0) {
         loading.innerHTML = `
             <div style="text-align: center; padding: 40px;">
-                <div style="font-size: 48px; margin-bottom: 16px;">🏳️</div>
-                <div style="color: #6b7280; font-size: 16px;">
+                
+                <div style="color: var(--text-dim); font-size: 16px;">
                     ${userPermissions.isAdmin ? 
                         'Aucune équipe sélectionnée n\'a résolu ce challenge' : 
                         'Votre équipe n\'a pas encore résolu ce challenge'}
                 </div>
                 ${userPermissions.isAdmin && selectedTeams.length === 0 ? 
-                    '<div style="margin-top: 8px; font-size: 14px; color: #9ca3af;">Sélectionnez des équipes dans la sidebar pour voir leurs résolutions</div>' : ''}
+                    '<div style="margin-top: 8px; font-size: 14px; color: var(--text-faint);">Sélectionnez des équipes dans la sidebar pour voir leurs résolutions</div>' : ''}
             </div>
         `;
         return;
@@ -927,25 +931,25 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
     }
     
     content.innerHTML = `
-        <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+        <div style="background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    <div style="font-size: 16px; font-weight: 600; color: #0369a1;">
-                        🏆 ${solvesData.length} résolution${solvesData.length > 1 ? 's' : ''}
+                    <div style="font-size: 16px; font-weight: 600; color: var(--accent);">
+                        ${solvesData.length} résolution${solvesData.length > 1 ? 's' : ''}
                     </div>
                     ${userPermissions.isAdmin ? 
-                        `<div style="font-size: 12px; color: #0c4a6e; margin-top: 4px;">
+                        `<div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">
                             Parmi les ${selectedTeams.length} équipe(s) sélectionnée(s)
                         </div>` : ''}
                     ${totalSolves && totalSolves.total > 0 ? 
-                        `<div style="font-size: 12px; color: #0c4a6e; margin-top: 4px; background: #e0f2fe; border: 1px solid #81d4fa; border-radius: 4px; padding: 2px 6px; display: inline-block;">
-                            📊 Total CTF: ${totalSolves.total} ${teams.length > 0 && !userPermissions.isAdmin ? 'équipe(s)' : 'résolution(s)'}
+                        `<div style="font-size: 12px; color: var(--text-dim); margin-top: 4px; background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 6px; display: inline-block;">
+                            Total CTF : ${totalSolves.total} ${teams.length > 0 && !userPermissions.isAdmin ? 'équipe(s)' : 'résolution(s)'}
                         </div>` : ''}
                 </div>
                 ${averageTime > 0 ? `
                     <div style="text-align: right;">
-                        <div style="font-size: 12px; color: #0c4a6e;">Temps moyen entre challenges</div>
-                        <div style="font-size: 16px; font-weight: 600; color: #0369a1;">${formatTimeDiff(averageTime)}</div>
+                        <div style="font-size: 12px; color: var(--text-dim);">Temps moyen entre challenges</div>
+                        <div style="font-size: 16px; font-weight: 600; color: var(--accent);">${formatTimeDiff(averageTime)}</div>
                     </div>
                 ` : ''}
             </div>
@@ -953,8 +957,8 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
         
         <div style="display: flex; flex-direction: column; gap: 12px;">
             ${solvesData.map((solve, idx) => `
-                <div style="background: #f9fafb; 
-                           border: 1px solid #e5e7eb; 
+                <div style="background: var(--surface-2); 
+                           border: 1px solid var(--border); 
                            border-radius: 8px; 
                            padding: 16px;
                            transition: all 0.2s;">
@@ -963,59 +967,59 @@ function displayChallengeSolves(solvesData, challengeId, totalSolves = null) {
                             <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
                                 <span style="font-weight: 700; 
                                            font-size: 20px; 
-                                           color: #374151;">
+                                           color: var(--text);">
                                     #${solve.place}
                                 </span>
                                 <div style="width: 16px; height: 16px; background: ${escapeHtml(solve.teamColor)}; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.2);"></div>
-                                <span style="font-weight: 600; font-size: 16px; color: #111827;">${escapeHtml(solve.team)}</span>
+                                <span style="font-weight: 600; font-size: 16px; color: var(--text);">${escapeHtml(solve.team)}</span>
                                 ${solve.attempts > 1 ? `
-                                    <span style="background: #fee2e2; color: #dc2626; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500;">
+                                    <span style="background: var(--danger-bg); color: var(--danger); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500;">
                                         ${Number(solve.attempts) - 1} fail${solve.attempts > 2 ? 's' : ''}
                                     </span>
                                 ` : ''}
                             </div>
-                            <div style="font-size: 14px; color: #6b7280;">
-                                📅 ${escapeHtml(solve.dateStr)}
+                            <div style="font-size: 14px; color: var(--text-dim);">
+                                ${escapeHtml(solve.dateStr)}
                             </div>
                         </div>
                         <div style="text-align: right; min-width: 160px;">
                             ${solve.relativeTimeStr ? `
-                                <div style="background: #fef3c7; 
-                                          border: 1px solid #fbbf24;
+                                <div style="background: var(--attempted-bg); 
+                                          border: 1px solid var(--attempted);
                                           border-radius: 6px; 
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
-                                    <div style="font-size: 10px; color: #92400e; font-weight: 500;">Temps écoulé dans le CTF</div>
-                                    <div style="font-size: 14px; color: #78350f; font-weight: 600;">${escapeHtml(solve.relativeTimeStr)}</div>
+                                    <div style="font-size: 10px; color: var(--attempted); font-weight: 500;">Temps écoulé dans le CTF</div>
+                                    <div style="font-size: 14px; color: var(--text); font-weight: 600;">${escapeHtml(solve.relativeTimeStr)}</div>
                                 </div>
                             ` : ''}
                             ${solve.timeFromUnlockStr ? `
-                                <div style="background: #f3e8ff; 
-                                          border: 1px solid #c084fc;
+                                <div style="background: rgba(155, 124, 216, 0.14); 
+                                          border: 1px solid #9b7cd8;
                                           border-radius: 6px; 
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
-                                    <div style="font-size: 10px; color: #6b21a8; font-weight: 500;">Temps pour résoudre (depuis déblocage)</div>
-                                    <div style="font-size: 14px; color: #581c87; font-weight: 600;">${escapeHtml(solve.timeFromUnlockStr)}</div>
+                                    <div style="font-size: 10px; color: #b9a3e3; font-weight: 500;">Temps pour résoudre (depuis déblocage)</div>
+                                    <div style="font-size: 14px; color: var(--text); font-weight: 600;">${escapeHtml(solve.timeFromUnlockStr)}</div>
                                 </div>
                             ` : ''}
                             ${solve.timeFromPrevChallStr ? `
-                                <div style="background: #dbeafe; 
-                                          border: 1px solid #93c5fd;
+                                <div style="background: var(--accent-bg); 
+                                          border: 1px solid var(--accent);
                                           border-radius: 6px; 
                                           padding: 4px 8px;
                                           margin-bottom: 4px;">
-                                    <div style="font-size: 10px; color: #1e40af; font-weight: 500;">Temps depuis challenge précédent</div>
-                                    <div style="font-size: 14px; color: #1e3a8a; font-weight: 600;">${escapeHtml(solve.timeFromPrevChallStr)}</div>
+                                    <div style="font-size: 10px; color: var(--accent); font-weight: 500;">Temps depuis challenge précédent</div>
+                                    <div style="font-size: 14px; color: var(--text); font-weight: 600;">${escapeHtml(solve.timeFromPrevChallStr)}</div>
                                 </div>
                             ` : ''}
                             ${solve.timeDiffStr && solve.place > 1 ? `
-                                <div style="background: #d1fae5; 
-                                          border: 1px solid #6ee7b7;
+                                <div style="background: var(--solved-bg); 
+                                          border: 1px solid var(--solved);
                                           border-radius: 6px; 
                                           padding: 4px 8px;">
-                                    <div style="font-size: 10px; color: #047857; font-weight: 500;">Δ équipe préc.</div>
-                                    <div style="font-size: 14px; color: #065f46; font-weight: 600;">+${escapeHtml(solve.timeDiffStr)}</div>
+                                    <div style="font-size: 10px; color: var(--solved); font-weight: 500;">Δ équipe préc.</div>
+                                    <div style="font-size: 14px; color: var(--text); font-weight: 600;">+${escapeHtml(solve.timeDiffStr)}</div>
                                 </div>
                             ` : ''}
                         </div>
@@ -1725,29 +1729,29 @@ let challengeMap = {};
 
 function showCORSInstructions() {
     const instructions = 
-`🔧 SOLUTIONS POUR CORRIGER L'ERREUR CORS :
+`SOLUTIONS POUR CORRIGER L'ERREUR CORS :
 
-1. 📡 PROXY CORS (Solution rapide)
+1. PROXY CORS (Solution rapide)
    • Ajoutez "https://cors-anywhere.herokuapp.com/" devant votre URL CTFd
    • Exemple: https://cors-anywhere.herokuapp.com/https://demo.ctfd.io
-   • ⚠️ À utiliser uniquement pour les tests
+   • À utiliser uniquement pour les tests
 
-2. 🔌 EXTENSION NAVIGATEUR (Recommandé pour le développement)
+2. EXTENSION NAVIGATEUR (Recommandé pour le développement)
    • Chrome: "CORS Unblock" ou "Disable CORS"
    • Firefox: "CORS Everywhere" 
-   • ⚠️ Désactivez après utilisation
+   • Désactivez après utilisation
 
-3. ⚙️ CONFIGURATION CTFD (Solution permanente)
+3. CONFIGURATION CTFD (Solution permanente)
    Ajoutez dans la configuration CTFd:
    • Access-Control-Allow-Origin: *
    • Access-Control-Allow-Headers: Authorization, Content-Type
    • Access-Control-Allow-Methods: GET, POST, PUT, DELETE
 
-4. 🏠 HÉBERGEMENT LOCAL (Solution pro)
+4. HÉBERGEMENT LOCAL (Solution pro)
    • Hébergez cette page sur le même domaine que CTFd
    • Ou utilisez un reverse proxy (nginx, Apache)
 
-5. 📱 ALTERNATIVE API
+5. ALTERNATIVE API
    • Utilisez l'interface CTFd directement
    • Ou développez un backend intermédiaire`;
     
@@ -2967,20 +2971,20 @@ function generateTeamFilters(searchTerm = '') {
         searchBar.innerHTML = `
             <input type="text" 
                    id="team-search" 
-                   placeholder="🔍 Rechercher et sélectionner une équipe (Entrée pour sélectionner)..." 
-                   style="width: 100%; padding: 8px 80px 8px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;"
+                   placeholder="Rechercher une équipe (Entrée pour sélectionner)" 
+                   style="width: 100%; padding: 8px 80px 8px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; background: var(--surface-2); color: var(--text);"
                    oninput="searchTeams(this.value)"
                    onkeydown="handleSearchKeydown(event)">
             <div style="position: absolute; right: 0; top: 0; display: flex;">
                 <button 
                     onclick="selectFirstSearchResult()"
-                    style="padding: 8px 6px; font-size: 11px; border: none; border-left: 1px solid #d1d5db; cursor: pointer; background: #10b981; color: white;"
+                    style="padding: 8px 6px; font-size: 11px; border: none; border-left: 1px solid var(--border); cursor: pointer; background: var(--surface-2); color: var(--solved);"
                     title="Sélectionner la première équipe trouvée">
                     ✓
                 </button>
                 <button 
                     onclick="clearSearch()"
-                    style="padding: 8px 6px; font-size: 11px; border: none; border-left: 1px solid #d1d5db; cursor: pointer; background: #ef4444; color: white; border-radius: 0 4px 4px 0;"
+                    style="padding: 8px 6px; font-size: 11px; border: none; border-left: 1px solid var(--border); cursor: pointer; background: var(--surface-2); color: var(--danger); border-radius: 0 4px 4px 0;"
                     title="Effacer la recherche">
                     ✗
                 </button>
@@ -2990,30 +2994,30 @@ function generateTeamFilters(searchTerm = '') {
                 <button 
                     id="filter-active"
                     onclick="toggleTeamStatusFilter('active')"
-                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.active ? '#10b981' : '#f3f4f6'}; color: ${teamStatusFilters.active ? 'white' : '#6b7280'};">
-                    ✅ Active
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.active ? 'var(--solved-bg)' : 'var(--surface-2)'}; color: ${teamStatusFilters.active ? 'var(--solved)' : 'var(--text-dim)'};">
+                    Actives
                 </button>
                 <button 
                     id="filter-hidden"
                     onclick="toggleTeamStatusFilter('hidden')"
-                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.hidden ? '#8b5cf6' : '#f3f4f6'}; color: ${teamStatusFilters.hidden ? 'white' : '#6b7280'};">
-                    👻 Cachées
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.hidden ? 'rgba(155, 124, 216, 0.14)' : 'var(--surface-2)'}; color: ${teamStatusFilters.hidden ? '#b9a3e3' : 'var(--text-dim)'};">
+                    Cachées
                 </button>
                 <button 
                     id="filter-banned"
                     onclick="toggleTeamStatusFilter('banned')"
-                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.banned ? '#ef4444' : '#f3f4f6'}; color: ${teamStatusFilters.banned ? 'white' : '#6b7280'};">
-                    🚫 Bannies
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; background: ${teamStatusFilters.banned ? 'var(--danger-bg)' : 'var(--surface-2)'}; color: ${teamStatusFilters.banned ? 'var(--danger)' : 'var(--text-dim)'};">
+                    Bannies
                 </button>
                 <div style="flex: 1;"></div>
                 <button 
                     onclick="selectAllVisibleTeams()"
-                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #10b981; border-radius: 4px; cursor: pointer; background: white; color: #10b981;">
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid var(--solved); border-radius: 4px; cursor: pointer; background: transparent; color: var(--solved);">
                     ✓ Tout
                 </button>
                 <button 
                     onclick="deselectAllVisibleTeams()"
-                    style="padding: 4px 8px; font-size: 11px; border: 1px solid #ef4444; border-radius: 4px; cursor: pointer; background: white; color: #ef4444;">
+                    style="padding: 4px 8px; font-size: 11px; border: 1px solid var(--danger); border-radius: 4px; cursor: pointer; background: transparent; color: var(--danger);">
                     ✗ Aucun
                 </button>
             </div>
@@ -3077,29 +3081,29 @@ function generateTeamFilters(searchTerm = '') {
         // Show loading indicator if team data is being loaded, cached data if available, or placeholder
         let progressText = '0/0';
         if (loadingTeams.has(team.name)) {
-            progressText = '⏳ Loading...';
+            progressText = 'Chargement…';
         } else if (isCacheValid(team.name) || teamProgress[team.name]) {
             const solvedCount = getTeamSolvedCount(team.name);
             progressText = `${solvedCount}/${totalChallenges}`;
         } else {
-            progressText = `📊 Not loaded`;
+            progressText = 'Non chargé';
         }
         
         // Ajouter des indicateurs pour les équipes cachées/bannies
         let statusIndicator = '';
         let teamStyle = '';
         if (team.hidden) {
-            statusIndicator = ' 👻';
+            statusIndicator = ' (cachée)';
             teamStyle = 'opacity: 0.7;';
         }
         if (team.banned) {
-            statusIndicator = ' 🚫';
+            statusIndicator = ' (bannie)';
             teamStyle = 'opacity: 0.5; text-decoration: line-through;';
         }
         
         // Mettre en évidence la première équipe si on est en mode recherche
         const isFirstResult = searchTerm && filteredTeams[0] === team;
-        const highlightStyle = isFirstResult ? 'background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 4px; margin: 1px;' : '';
+        const highlightStyle = isFirstResult ? 'background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 4px; margin: 1px;' : '';
         
         const titleParts = [];
         if (team.hidden) titleParts.push('Équipe cachée');
@@ -3109,7 +3113,7 @@ function generateTeamFilters(searchTerm = '') {
             <label class="team-checkbox" style="${teamStyle}${highlightStyle}" title="${escapeHtml(titleParts.join(' - '))}">
                 <input type="checkbox" class="team-checkbox-input" data-team-name="${escapeHtml(team.name)}" ${isChecked ? 'checked' : ''}>
                 <div class="team-color" style="background: ${escapeHtml(team.color)};"></div>
-                <span class="team-name">${escapeHtml(team.name)}${statusIndicator}${isFirstResult ? ' 🎯' : ''}</span>
+                <span class="team-name">${escapeHtml(team.name)}${statusIndicator}${isFirstResult ? ' ↵' : ''}</span>
                 <span class="team-progress">${escapeHtml(progressText)}</span>
             </label>
         `;
@@ -3118,12 +3122,12 @@ function generateTeamFilters(searchTerm = '') {
     // Afficher le nombre de résultats avec options de sélection
     if (searchTerm) {
         const unselectedCount = filteredTeams.filter(team => !selectedTeams.includes(team.name)).length;
-        container.innerHTML = `<div style="font-size: 11px; color: #6b7280; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+        container.innerHTML = `<div style="font-size: 11px; color: var(--text-dim); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
             <span>${filteredTeams.length} équipe(s) trouvée(s)${unselectedCount > 0 ? ` (${unselectedCount} non sélectionnée(s))` : ''}</span>
             ${unselectedCount > 0 ? `
                 <button 
                     onclick="selectAllVisibleTeams()"
-                    style="padding: 2px 6px; font-size: 10px; border: 1px solid #10b981; border-radius: 3px; cursor: pointer; background: white; color: #10b981;">
+                    style="padding: 2px 6px; font-size: 10px; border: 1px solid var(--solved); border-radius: 3px; cursor: pointer; background: transparent; color: var(--solved);">
                     ✓ Toutes
                 </button>
             ` : ''}
@@ -3208,16 +3212,16 @@ function toggleTeamStatusFilter(status) {
         
         switch(status) {
             case 'active':
-                bgColor = isActive ? '#10b981' : '#f3f4f6';
-                textColor = isActive ? 'white' : '#6b7280';
+                bgColor = isActive ? 'var(--solved-bg)' : 'var(--surface-2)';
+                textColor = isActive ? 'var(--solved)' : 'var(--text-dim)';
                 break;
             case 'hidden':
-                bgColor = isActive ? '#8b5cf6' : '#f3f4f6';
-                textColor = isActive ? 'white' : '#6b7280';
+                bgColor = isActive ? 'rgba(155, 124, 216, 0.14)' : 'var(--surface-2)';
+                textColor = isActive ? '#b9a3e3' : 'var(--text-dim)';
                 break;
             case 'banned':
-                bgColor = isActive ? '#ef4444' : '#f3f4f6';
-                textColor = isActive ? 'white' : '#6b7280';
+                bgColor = isActive ? 'var(--danger-bg)' : 'var(--surface-2)';
+                textColor = isActive ? 'var(--danger)' : 'var(--text-dim)';
                 break;
         }
         
@@ -3309,17 +3313,21 @@ function sortTeamsBy(mode) {
     if (mode === 'selected') {
         // Toggle pour afficher seulement les équipes sélectionnées
         showOnlySelected = !showOnlySelected;
-        document.getElementById('sort-selected-btn').style.background = showOnlySelected ? '#ef4444' : '#10b981';
-        document.getElementById('sort-selected-btn').textContent = showOnlySelected ? '✓ Coché seul' : '✓ Coché';
+        document.getElementById('sort-selected-btn').style.background = showOnlySelected ? 'var(--accent-bg)' : 'var(--surface-2)';
+        document.getElementById('sort-selected-btn').style.color = showOnlySelected ? 'var(--accent)' : 'var(--text-dim)';
+        document.getElementById('sort-selected-btn').textContent = showOnlySelected ? 'Sélection seule' : 'Sélection';
     } else {
         teamSortMode = mode;
         showOnlySelected = false; // Reset le filtre quand on change de tri
         
         // Mettre à jour l'apparence des boutons
-        document.getElementById('sort-score-btn').style.background = mode === 'score' ? '#6366f1' : '#10b981';
-        document.getElementById('sort-name-btn').style.background = mode === 'name' ? '#6366f1' : '#10b981';
-        document.getElementById('sort-selected-btn').style.background = '#10b981';
-        document.getElementById('sort-selected-btn').textContent = '✓ Coché';
+        document.getElementById('sort-score-btn').style.background = mode === 'score' ? 'var(--accent-bg)' : 'var(--surface-2)';
+        document.getElementById('sort-score-btn').style.color = mode === 'score' ? 'var(--accent)' : 'var(--text-dim)';
+        document.getElementById('sort-name-btn').style.background = mode === 'name' ? 'var(--accent-bg)' : 'var(--surface-2)';
+        document.getElementById('sort-name-btn').style.color = mode === 'name' ? 'var(--accent)' : 'var(--text-dim)';
+        document.getElementById('sort-selected-btn').style.background = 'var(--surface-2)';
+        document.getElementById('sort-selected-btn').style.color = 'var(--text-dim)';
+        document.getElementById('sort-selected-btn').textContent = 'Sélection';
         
         // Trier les équipes selon le mode choisi
         if (mode === 'name') {
@@ -3379,7 +3387,7 @@ Debug info:
 - currentUser.name: ${currentUser.name}
 - Team attempting to load: ${teamName}`;
                 console.error(debugInfo);
-                alert('❌ Impossible de charger les données de l\'équipe.\n\nVérifiez que vous êtes bien connecté à CTFd et réessayez.\n\nConsultez la console pour plus de détails.');
+                alert('Impossible de charger les données de l\'équipe.\n\nVérifiez que vous êtes bien connecté à CTFd et réessayez.\n\nConsultez la console pour plus de détails.');
             }
             console.error('Error details:', error.message, error.stack);
         }
@@ -3450,13 +3458,10 @@ function setViewMode(mode) {
         window.heatmapMode = false;
         debugLog('🛤️ Mode Parcours activé');
         
-        // Show animation and export buttons
-        document.getElementById('animate-btn').style.display = 'inline-block';
-        setParcoursExportButtonsVisible(true);
-
-        if (d3SystemReady && window.updateTeamPaths) {
-            window.updateTeamPaths();
-        }
+        // Show parcours toolbar (animation + export)
+        setParcoursToolbarVisible(true);
+        // Les tracés sont dessinés après le re-rendu D3 (voir renderD3Challenges),
+        // sinon ils utilisent des positions périmées le temps que la simulation se stabilise.
         // Hide heatmap legend
         document.getElementById('heatmap-legend').classList.remove('visible');
     } else if (mode === 'heatmap') {
@@ -3466,9 +3471,8 @@ function setViewMode(mode) {
         window.parcoursMode = false;
         debugLog('🔥 Mode Heatmap activé');
         
-        // Hide animation and export buttons
-        document.getElementById('animate-btn').style.display = 'none';
-        setParcoursExportButtonsVisible(false);
+        // Hide parcours toolbar
+        setParcoursToolbarVisible(false);
 
         // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
@@ -3498,9 +3502,8 @@ function setViewMode(mode) {
         window.heatmapMode = false;
         debugLog('🗂️ Mode Overview activé');
         
-        // Hide animation and export buttons
-        document.getElementById('animate-btn').style.display = 'none';
-        setParcoursExportButtonsVisible(false);
+        // Hide parcours toolbar
+        setParcoursToolbarVisible(false);
 
         // Clear paths if any
         if (d3SystemReady && window.d3Data && window.d3Data.pathGroup) {
@@ -3526,11 +3529,39 @@ function toggleParcours() {
     }
 }
 
-function setParcoursExportButtonsVisible(visible) {
-    ['export-md-btn', 'export-json-btn'].forEach(id => {
-        const btn = document.getElementById(id);
-        if (btn) btn.style.display = visible ? 'inline-block' : 'none';
+function setParcoursToolbarVisible(visible) {
+    const bar = document.getElementById('parcours-toolbar');
+    if (bar) bar.style.display = visible ? 'flex' : 'none';
+}
+
+// Rend un panneau flottant déplaçable par sa poignée (titre)
+function makePanelDraggable(panelId, handleSelector) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    const handle = handleSelector ? panel.querySelector(handleSelector) : panel;
+    if (!handle) return;
+    let dragging = false, startX, startY, origX, origY;
+    handle.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button, input, a')) return;
+        dragging = true;
+        const rect = panel.getBoundingClientRect();
+        const parentRect = panel.offsetParent.getBoundingClientRect();
+        origX = rect.left - parentRect.left;
+        origY = rect.top - parentRect.top;
+        startX = e.clientX;
+        startY = e.clientY;
+        handle.setPointerCapture(e.pointerId);
+        e.preventDefault();
     });
+    handle.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        panel.style.left = `${origX + e.clientX - startX}px`;
+        panel.style.top = `${origY + e.clientY - startY}px`;
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+    });
+    handle.addEventListener('pointerup', () => { dragging = false; });
+    handle.addEventListener('pointercancel', () => { dragging = false; });
 }
 
 // Construit les données de parcours des équipes sélectionnées :
@@ -3793,7 +3824,7 @@ function generateChallengeMap() {
         if (state === 'solved') statusIcon = '✓';
         else if (state === 'attempted') statusIcon = '!';
         else if (state === 'available') statusIcon = '○';
-        else statusIcon = '🔒';
+        else statusIcon = '⊘';
         
         // Indicateurs par équipe (seulement pour admin)
         let teamIndicators = '';
@@ -3804,7 +3835,7 @@ function generateChallengeMap() {
                         const team = teams.find(t => t.name === teamName);
                         const progress = getTeamProgress(teamName, challengeId);
                         
-                        let dotColor = '#e5e7eb';
+                        let dotColor = '#2e3947';
                         if (progress?.solved) dotColor = team.color;
                         else if (progress?.attempted) dotColor = '#f59e0b';
                         else if (progress?.locked) dotColor = '#9ca3af';
@@ -4073,12 +4104,12 @@ function showTooltip(event, challengeId) {
 
         if (progress?.solved) {
             const failures = Math.max(0, (progress.attempts || 1) - 1);
-            content += `✅ <strong>Résolu !</strong><br>Temps: ${Number(progress.timeSpent) || 0}min<br>Tentatives: ${Number(progress.attempts) || 1}`;
+            content += `<strong>Résolu</strong><br>Temps: ${Number(progress.timeSpent) || 0}min<br>Tentatives: ${Number(progress.attempts) || 1}`;
             if (failures > 0) content += `<br>Échecs: ${failures}`;
         } else if (progress?.attempted) {
-            content += `⚠️ <strong>Tenté</strong><br>Temps: ${Number(progress.timeSpent) || 0}min<br>Tentatives: ${Number(progress.attempts) || 1}<br>Échecs: ${Number(progress.attempts) || 1}`;
+            content += `<strong>Tenté</strong><br>Temps: ${Number(progress.timeSpent) || 0}min<br>Tentatives: ${Number(progress.attempts) || 1}<br>Échecs: ${Number(progress.attempts) || 1}`;
         } else {
-            content += `📝 <strong>Disponible</strong><br>Prêt à être tenté`;
+            content += `<strong>Disponible</strong>`;
         }
 
         tooltip.innerHTML = content;
@@ -4094,7 +4125,7 @@ function showTooltip(event, challengeId) {
         let content = `<strong>${escapeHtml(challengeInfo.name)}</strong><br>Points: ${Number(challengeInfo.points) || 0}<br><br>`;
 
         if (solvedTeams.length > 0) {
-            content += `✅ <strong>Résolu par:</strong><br>`;
+            content += `<strong>Résolu par :</strong><br>`;
             solvedTeams.forEach(team => {
                 const progress = getTeamProgress(team, challengeId);
                 content += `• ${escapeHtml(team)} (${Number(progress.timeSpent) || 0}min, ${Number(progress.attempts) || 1} tent.)<br>`;
@@ -4102,7 +4133,7 @@ function showTooltip(event, challengeId) {
         }
 
         if (attemptedTeams.length > 0) {
-            content += `<br>⚠️ <strong>Tenté par:</strong><br>`;
+            content += `<br><strong>Tenté par :</strong><br>`;
             attemptedTeams.forEach(team => {
                 const progress = getTeamProgress(team, challengeId);
                 content += `• ${escapeHtml(team)} (${Number(progress.timeSpent) || 0}min, ${Number(progress.attempts) || 1} tent.)<br>`;
@@ -4254,7 +4285,7 @@ function updateAPIStatus(status, message) {
     
     // Afficher l'URL du CTFd si connecté
     if ((status === 'connected' || status === 'proxy') && currentUser.ctfdUrl && urlDisplay) {
-        urlDisplay.textContent = `📍 ${currentUser.ctfdUrl}`;
+        urlDisplay.textContent = currentUser.ctfdUrl;
         urlDisplay.style.display = 'block';
     } else if (urlDisplay) {
         urlDisplay.textContent = '';
@@ -4288,15 +4319,15 @@ function showCORSError() {
     if (!errorElement) return;
     
     errorElement.innerHTML = 
-`<strong>🚫 Erreur CORS détectée</strong><br><br>
+`<strong>Erreur CORS détectée</strong><br><br>
 Le serveur CTFd ne permet pas les requêtes cross-origin depuis cette page.<br><br>
 <strong>Solutions possibles :</strong><br>
 1. <strong>Proxy CORS :</strong> Utilisez un proxy comme <code>https://cors-anywhere.herokuapp.com/</code><br>
 2. <strong>Extension navigateur :</strong> Installez "CORS Unblock" ou "CORS Toggle"<br>
 3. <strong>Serveur local :</strong> Hébergez cette page sur le même domaine que CTFd<br>
 4. <strong>Configuration CTFd :</strong> Ajoutez les headers CORS dans CTFd<br><br>
-<button class="demo-btn" onclick="useCORSProxy()">🔧 Essayer avec proxy CORS</button>
-<button class="demo-btn" onclick="showCORSInstructions()">📖 Instructions détaillées</button>`;
+<button class="demo-btn" onclick="useCORSProxy()">Essayer avec proxy CORS</button>
+<button class="demo-btn" onclick="showCORSInstructions()">Instructions détaillées</button>`;
     
     errorElement.style.display = 'block';
 }
@@ -4306,20 +4337,20 @@ function showAuthenticationError() {
     if (!errorElement) return;
     
     errorElement.innerHTML = 
-`<strong>🔑 Erreur d'authentification</strong><br><br>
+`<strong>Erreur d'authentification</strong><br><br>
 L'accès à l'API CTFd a été refusé. Cela peut être dû à :<br><br>
 <strong>Causes possibles :</strong><br>
 1. <strong>Token invalide :</strong> Vérifiez que votre token API est correct<br>
 2. <strong>Token expiré :</strong> Régénérez un nouveau token dans CTFd<br>
 3. <strong>Permissions insuffisantes :</strong> Votre compte n'a pas les droits API<br>
 4. <strong>URL incorrecte :</strong> Vérifiez l'URL de votre instance CTFd<br><br>
-<strong>💡 Comment corriger :</strong><br>
+<strong>Comment corriger :</strong><br>
 • Allez dans <em>Settings → API Key</em> dans CTFd<br>
 • Créez/régénérez votre token API<br>
 • Copiez le token complet (commence par <code>ctf_</code>)<br>
 • Vérifiez que l'URL CTFd est accessible<br><br>
-<button class="demo-btn" onclick="document.getElementById('api-token').focus()">🔑 Modifier le token</button>
-<button class="demo-btn" onclick="document.getElementById('ctfd-url').focus()">🌐 Modifier l'URL</button>`;
+<button class="demo-btn" onclick="document.getElementById('api-token').focus()">Modifier le token</button>
+<button class="demo-btn" onclick="document.getElementById('ctfd-url').focus()">Modifier l'URL</button>`;
     
     errorElement.style.display = 'block';
 }
@@ -4336,34 +4367,34 @@ function useCORSProxy() {
 
 function showQuickSetup() {
     const instructions = 
-`⚡ INSTALLATION RAPIDE - 3 OPTIONS
+`INSTALLATION RAPIDE - 3 OPTIONS
 
-🥇 OPTION 1 : Extension Chrome/Firefox (30 secondes)
+OPTION 1 : Extension Chrome/Firefox (30 secondes)
 1. Installez "Allow CORS" ou "CORS Unblock"
 2. Ouvrez ce fichier HTML directement
 3. Activez l'extension et connectez-vous
-✅ Avantage : Ultra rapide, aucune installation
+Avantage : Ultra rapide, aucune installation
 
-🥈 OPTION 2 : Proxy Node.js (2 minutes) 
+OPTION 2 : Proxy Node.js (2 minutes) 
 1. Dans le dossier du projet :
    npm install
    CTFD_URL=https://votre-ctfd.com npm start
    
 2. Ouvrez http://localhost:3000/index.html
-✅ Avantage : Pas besoin d'extension, plus sécurisé
+Avantage : Pas besoin d'extension, plus sécurisé
 
-🥉 OPTION 3 : Serveur Python + Extension
+OPTION 3 : Serveur Python + Extension
 1. python -m http.server 8000
 2. Installez une extension CORS
 3. Ouvrez http://localhost:8000/index.html
-✅ Avantage : Simple si Python déjà installé
+Avantage : Simple si Python déjà installé
 
-🔐 OBTENIR UN TOKEN API :
+OBTENIR UN TOKEN API :
 1. Connectez-vous à CTFd
 2. Settings → Access Tokens → Create
 3. Copiez le token (ctf_xxxxxxxxx)
 
-🚀 Conseil : Commencez par l'Option 1 !`;
+Conseil : Commencez par l'Option 1 !`;
     
     debugLog(instructions);
 }
@@ -5939,19 +5970,19 @@ function updateActiveFiltersDisplay() {
     
     // Search
     if (currentFilters.search) {
-        activeTags.push(`🔎 "${escapeHtml(currentFilters.search)}"`);
+        activeTags.push(`Recherche : "${escapeHtml(currentFilters.search)}"`);
     }
 
     // Categories
     if (currentFilters.categories.size > 0) {
         currentFilters.categories.forEach(cat => {
-            activeTags.push(`📂 ${escapeHtml(cat)}`);
+            activeTags.push(`${escapeHtml(cat)}`);
         });
     }
     
     // Points
     if (currentFilters.minPoints > 0 || currentFilters.maxPoints < 500) {
-        activeTags.push(`⭐ ${currentFilters.minPoints}-${currentFilters.maxPoints}pts`);
+        activeTags.push(`${currentFilters.minPoints}–${currentFilters.maxPoints} pts`);
     }
     
     // Statuses
@@ -5959,10 +5990,10 @@ function updateActiveFiltersDisplay() {
     const missingStatuses = allStatuses.filter(s => !currentFilters.statuses.has(s));
     missingStatuses.forEach(status => {
         const labels = {
-            solved: '❌ Non résolus',
-            attempted: '❌ Non tentés',
-            available: '❌ Non disponibles',
-            locked: '❌ Non verrouillés'
+            solved: 'Non résolus',
+            attempted: 'Non tentés',
+            available: 'Non disponibles',
+            locked: 'Non verrouillés'
         };
         activeTags.push(labels[status]);
     });
@@ -5970,7 +6001,7 @@ function updateActiveFiltersDisplay() {
     if (activeTags.length > 0) {
         container.style.display = 'block';
         tagsContainer.innerHTML = activeTags.map(tag => 
-            `<span style="background: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin: 2px; display: inline-block;">${tag}</span>`
+            `<span style="background: var(--accent-bg); color: var(--accent); padding: 2px 8px; border-radius: 12px; font-size: 12px; margin: 2px; display: inline-block;">${tag}</span>`
         ).join('');
     } else {
         container.style.display = 'none';

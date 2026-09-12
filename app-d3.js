@@ -592,8 +592,13 @@ function renderD3Challenges() {
                 d3Data.simulation.alphaTarget(0);
             }
         }, 3000); // 3 secondes max
-        
-        
+
+        // En mode Parcours, dessiner les tracés une fois le rendu posé,
+        // même si la simulation ne produit aucun tick.
+        if (window.parcoursMode && window.refreshTeamPaths) {
+            setTimeout(() => window.refreshTeamPaths(), 60);
+        }
+
     } catch (error) {
         console.error('❌ Error rendering D3 challenges:', error);
         console.error('Error rendering visualization, falling back to legacy mode');
@@ -620,7 +625,7 @@ function renderD3Links() {
     const linkEnter = links.enter()
         .append('path')
         .attr('class', 'd3-link')
-        .attr('stroke', '#6366f1')
+        .attr('stroke', '#5c6673')
         .attr('stroke-width', 2)
         .attr('fill', 'none')
         .attr('opacity', 0.7)
@@ -703,7 +708,7 @@ function renderD3Nodes() {
         .attr('text-anchor', 'middle')
         .attr('x', D3_CONFIG.nodeWidth / 2 - 12)
         .attr('y', -D3_CONFIG.nodeHeight / 2 + 16)
-        .style('fill', '#ffffff')
+        .style('fill', '#12161c')
         .style('font-weight', 'bold')
         .style('font-size', '12px')
         .text(d => getStatusIcon(d.status));
@@ -764,8 +769,8 @@ function setupD3Drag() {
             }
             
             // Update team paths in real-time if parcours mode is active
-            if (window.parcoursMode && window.updateTeamPaths) {
-                window.updateTeamPaths();
+            if (window.parcoursMode && window.refreshTeamPaths) {
+                window.refreshTeamPaths();
             }
         })
         .on('end', function(event, d) {
@@ -789,7 +794,7 @@ function setupD3Drag() {
             
             // Update team paths if parcours mode is active
             if (window.parcoursMode && window.updateTeamPaths) {
-                setTimeout(() => window.updateTeamPaths(), 50);
+                setTimeout(() => window.refreshTeamPaths(), 50);
             }
         });
 }
@@ -807,10 +812,16 @@ function updateD3Positions() {
     d3Data.nodeGroup.selectAll('.d3-challenge-node')
         .attr('transform', d => `translate(${d.x}, ${d.y})`);
     
-    // Update team paths if parcours mode is active
-    if (window.parcoursMode && window.updateTeamPaths && d3Data.simulation.alpha() < 0.01) {
-        // Only update when simulation is almost stopped to avoid performance issues
-        window.updateTeamPaths();
+    // Update team paths if parcours mode is active.
+    // Pendant la stabilisation on redessine de façon throttlée pour que les
+    // flèches suivent les nœuds (sinon elles pointent dans le vide au début).
+    if (window.parcoursMode && window.refreshTeamPaths) {
+        const now = performance.now();
+        const settled = d3Data.simulation.alpha() < 0.01;
+        if (settled || now - (d3Data.lastPathRefresh || 0) > 120) {
+            d3Data.lastPathRefresh = now;
+            window.refreshTeamPaths();
+        }
     }
     
     // Update link paths with curved arrows
@@ -891,7 +902,7 @@ function updateD3TeamIndicators(nodes) {
                 .attr('cx', startX + i * 12)
                 .attr('cy', 0)
                 .attr('fill', team.color)
-                .attr('stroke', '#ffffff')
+                .attr('stroke', '#191f27')
                 .attr('stroke-width', 1);
         });
     });
@@ -1092,7 +1103,7 @@ function getChallengeTeamIndicators(challengeId) {
         
         return {
             team: teamName,
-            color: team ? team.color : '#6b7280',
+            color: team ? team.color : '#8b96a5',
             solved: solved
         };
     }).filter(indicator => indicator.solved);
@@ -1107,14 +1118,14 @@ function getChallengeColor(status, challengeId = null) {
             return {
                 background: heatColor,
                 border: heatColor,
-                status: '#ffffff'
+                status: '#12161c'
             };
         } else {
             // Challenge not solved/attempted by selected teams - show in gray
             return {
-                background: '#f3f4f6',
-                border: '#d1d5db',
-                status: '#9ca3af'
+                background: '#191f27',
+                border: '#4a5561',
+                status: '#5c6673'
             };
         }
     }
@@ -1123,28 +1134,28 @@ function getChallengeColor(status, challengeId = null) {
     const colors = {
         solved: {
             background: 'url(#gradient-solved)',
-            border: '#10b981',
-            status: '#10b981'
+            border: '#57ab7c',
+            status: '#57ab7c'
         },
         attempted: {
             background: 'url(#gradient-attempted)',
-            border: '#f59e0b',
-            status: '#f59e0b'
+            border: '#c99a4b',
+            status: '#c99a4b'
         },
         available: {
-            background: '#f3f4f6',
-            border: '#9ca3af',
-            status: '#9ca3af'
+            background: 'url(#gradient-available)',
+            border: '#7aa5d2',
+            status: '#7aa5d2'
         },
         locked: {
-            background: '#f3f4f6',
-            border: '#d1d5db',
-            status: '#9ca3af'
+            background: 'url(#gradient-locked)',
+            border: '#4a5561',
+            status: '#4a5561'
         },
         hidden: {
-            background: '#f9fafb',
-            border: '#e5e7eb',
-            status: '#e5e7eb'
+            background: '#191f27',
+            border: '#2e3947',
+            status: '#2e3947'
         }
     };
     
@@ -1154,9 +1165,9 @@ function getChallengeColor(status, challengeId = null) {
 function getStatusIcon(status) {
     const icons = {
         solved: '✓',
-        attempted: '⚡',
+        attempted: '!',
         available: '●',
-        locked: '🔒',
+        locked: '⊘',
         hidden: ''
     };
     return icons[status] || '●';
@@ -1311,6 +1322,8 @@ let pathAnimationState = {
     animationId: null,
     teamSolveSequences: {}, // Store solve sequences for each team
     speedMultiplier: 1, // Current speed multiplier
+    isPaused: false, // Animation en pause (session toujours active)
+    sessionActive: false, // Une session d'animation est en cours (même en pause ou terminée)
     startTime: null, // Competition start time (first solve)
     endTime: null, // Competition end time (last solve)
     currentVirtualTime: null, // Current virtual time being displayed
@@ -1387,9 +1400,12 @@ function startPathAnimation() {
     // Reset animation state
     pathAnimationState.currentStep = 0;
     pathAnimationState.isPlaying = true;
+    pathAnimationState.isPaused = false;
+    pathAnimationState.sessionActive = true;
     pathAnimationState.startTime = Date.now();
     
-    // Calculate all solve events
+    // Calculate all solve events (recompute sequences so the session is self-contained)
+    pathAnimationState.teamSolveSequences = calculateTeamSolveSequences();
     pathAnimationState.allEvents = calculateAllSolveEvents();
     
     // Initialize timeline
@@ -1411,7 +1427,8 @@ function startPathAnimation() {
     showAnimationControls();
     
     // Start the animation loop
-    updateAnimateButton('⏹️ Arrêter');
+    updateAnimateButton('Arrêter');
+    updatePauseButton();
     animateNextStep();
 }
 
@@ -1424,8 +1441,11 @@ function stopPathAnimation() {
         pathAnimationState.animationId = null;
     }
     pathAnimationState.isPlaying = false;
+    pathAnimationState.isPaused = false;
+    pathAnimationState.sessionActive = false;
     pathAnimationState.currentStep = 0;
-    updateAnimateButton('🎬 Animer');
+    updateAnimateButton('Animer');
+    updatePauseButton();
     hideTimeline();
     hideAnimationControls();
 }
@@ -1473,13 +1493,15 @@ function setupTeamMarkers() {
  * Animate next step in the progression
  */
 function animateNextStep() {
-    if (!pathAnimationState.isPlaying) return;
+    if (!pathAnimationState.isPlaying || pathAnimationState.isPaused) return;
     
     const allSolveEvents = pathAnimationState.allEvents;
     
     if (pathAnimationState.currentStep >= allSolveEvents.length) {
-        // Animation complete
+        // Animation complete — session en pause, prête à être rejouée
         pathAnimationState.isPlaying = false;
+        pathAnimationState.isPaused = true;
+        updatePauseButton();
         const lastEvent = allSolveEvents[allSolveEvents.length - 1];
         const endTime = pathAnimationState.endTime;
         const startTime = pathAnimationState.startTime;
@@ -1512,6 +1534,156 @@ function animateNextStep() {
 }
 
 /**
+ * Compute the bezier geometry of a path segment between two solves.
+ */
+function computeSegmentGeometry(event, teamIndex) {
+    const offset = (teamIndex - (window.selectedTeams.length - 1) / 2) * 20;
+    const edges = getEdgePoint(event.fromSolve.node, event.toSolve.node, D3_CONFIG.nodeWidth, D3_CONFIG.nodeHeight);
+    const sx = edges.source.x, sy = edges.source.y;
+    const tx = edges.target.x, ty = edges.target.y;
+    const dx = tx - sx, dy = ty - sy;
+    const dr = Math.sqrt(dx * dx + dy * dy) || 1;
+    const mx = (sx + tx) / 2 + (-dy / dr) * offset;
+    const my = (sy + ty) / 2 + (dx / dr) * offset;
+    return { sx, sy, mx, my, tx, ty, pathString: `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}` };
+}
+
+/**
+ * Draw a segment instantly (no transition) — used when rebuilding to a step.
+ */
+function drawSegmentInstant(event) {
+    const team = window.teams.find(t => t.name === event.teamName);
+    const teamIndex = window.selectedTeams.indexOf(event.teamName);
+    const teamColor = team ? team.color : `hsl(${teamIndex * 360 / window.selectedTeams.length}, 70%, 50%)`;
+    const markerId = `arrow-${event.teamName.replace(/\s+/g, '-')}`;
+    const g = computeSegmentGeometry(event, teamIndex);
+
+    d3Data.pathGroup.append('path')
+        .attr('class', `team-path-glow team-path-glow-${teamIndex}`)
+        .attr('stroke', teamColor)
+        .attr('stroke-width', 8)
+        .attr('fill', 'none')
+        .attr('opacity', 0.3)
+        .attr('filter', 'blur(4px)')
+        .attr('d', g.pathString);
+
+    d3Data.pathGroup.append('path')
+        .attr('class', `team-path team-path-${teamIndex}`)
+        .attr('stroke', teamColor)
+        .attr('stroke-width', 4)
+        .attr('fill', 'none')
+        .attr('opacity', 0.9)
+        .attr('stroke-linecap', 'round')
+        .attr('marker-end', `url(#${markerId})`)
+        .attr('d', g.pathString);
+
+    drawPathTimeLabel(g.sx, g.sy, g.mx, g.my, g.tx, g.ty,
+        event.toSolve.date - event.fromSolve.date, teamColor);
+}
+
+/**
+ * Redraw all segments up to the current step (after a drag or a manual step).
+ */
+function rebuildAnimationToStep() {
+    if (!d3Data.pathGroup) return;
+    d3Data.pathGroup.selectAll('*').remove();
+    setupTeamMarkers();
+    const events = pathAnimationState.allEvents;
+    const upTo = Math.min(pathAnimationState.currentStep, events.length);
+    for (let i = 0; i < upTo; i++) {
+        drawSegmentInstant(events[i]);
+    }
+    if (upTo > 0) {
+        updateTimeline(events[upTo - 1], upTo, events.length);
+    } else {
+        initializeTimeline();
+    }
+}
+
+/**
+ * Pause / resume the running animation.
+ */
+function togglePlayPause() {
+    if (!pathAnimationState.sessionActive) {
+        startPathAnimation();
+        updateAnimateButton('Arrêter');
+        updatePauseButton();
+        return;
+    }
+    if (pathAnimationState.isPaused || !pathAnimationState.isPlaying) {
+        pathAnimationState.isPaused = false;
+        pathAnimationState.isPlaying = true;
+        if (pathAnimationState.currentStep >= pathAnimationState.allEvents.length) {
+            pathAnimationState.currentStep = 0;
+            rebuildAnimationToStep();
+        }
+        animateNextStep();
+    } else {
+        pathAnimationState.isPaused = true;
+        if (pathAnimationState.animationId) {
+            clearTimeout(pathAnimationState.animationId);
+            pathAnimationState.animationId = null;
+        }
+    }
+    updatePauseButton();
+}
+
+/**
+ * Step the animation backward/forward by one solve.
+ */
+function stepAnimation(delta) {
+    if (!pathAnimationState.sessionActive) {
+        // Démarrer une session en pause pour permettre le pas-à-pas
+        startPathAnimation();
+        updateAnimateButton('Arrêter');
+        pathAnimationState.isPaused = true;
+        if (pathAnimationState.animationId) {
+            clearTimeout(pathAnimationState.animationId);
+            pathAnimationState.animationId = null;
+        }
+        pathAnimationState.currentStep = 0;
+        d3Data.pathGroup.selectAll('*').remove();
+        setupTeamMarkers();
+    } else if (!pathAnimationState.isPaused) {
+        pathAnimationState.isPaused = true;
+        if (pathAnimationState.animationId) {
+            clearTimeout(pathAnimationState.animationId);
+            pathAnimationState.animationId = null;
+        }
+    }
+    const max = pathAnimationState.allEvents.length;
+    pathAnimationState.currentStep = Math.max(0, Math.min(max, pathAnimationState.currentStep + delta));
+    rebuildAnimationToStep();
+    updatePauseButton();
+}
+
+/**
+ * Refresh team paths without killing a running animation session
+ * (called during node drags in parcours mode).
+ */
+function refreshTeamPaths() {
+    if (pathAnimationState.sessionActive) {
+        rebuildAnimationToStep();
+    } else {
+        updateTeamPaths();
+    }
+}
+
+const D3_ICON_PLAY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
+const D3_ICON_STOP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
+const D3_ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg>';
+
+function updatePauseButton() {
+    const btn = document.getElementById('anim-pause-btn');
+    if (!btn) return;
+    const running = pathAnimationState.sessionActive
+        && pathAnimationState.isPlaying
+        && !pathAnimationState.isPaused;
+    btn.innerHTML = running ? D3_ICON_PAUSE : D3_ICON_PLAY;
+    btn.title = running ? 'Pause' : 'Lecture';
+}
+
+/**
  * Draw a time label at the midpoint of a quadratic bezier path segment.
  * Shows the elapsed time between the two solves of the segment.
  */
@@ -1532,6 +1704,7 @@ function drawPathTimeLabel(sx, sy, mx, my, tx, ty, elapsedMs, teamColor) {
         .attr('dominant-baseline', 'central')
         .attr('font-size', '11px')
         .attr('font-weight', '600')
+        .attr('font-family', "ui-monospace, 'Cascadia Code', Consolas, monospace")
         .attr('fill', teamColor)
         .text(formatTimeDiff(elapsedMs));
 
@@ -1543,7 +1716,7 @@ function drawPathTimeLabel(sx, sy, mx, my, tx, ty, elapsedMs, teamColor) {
         .attr('width', bbox.width + 10)
         .attr('height', bbox.height + 4)
         .attr('rx', (bbox.height + 4) / 2)
-        .attr('fill', 'rgba(255, 255, 255, 0.9)')
+        .attr('fill', 'rgba(25, 31, 39, 0.92)')
         .attr('stroke', teamColor)
         .attr('stroke-width', 1);
 
@@ -1554,29 +1727,8 @@ function drawPathTimeLabel(sx, sy, mx, my, tx, ty, elapsedMs, teamColor) {
  * Draw a single animated path segment
  */
 function drawAnimatedPath(event, teamColor, teamIndex) {
-    const offset = (teamIndex - (window.selectedTeams.length - 1) / 2) * 20;
     const markerId = `arrow-${event.teamName.replace(/\s+/g, '-')}`;
-    
-    // Calculate path
-    const edges = getEdgePoint(event.fromSolve.node, event.toSolve.node, D3_CONFIG.nodeWidth, D3_CONFIG.nodeHeight);
-    const sx = edges.source.x;
-    const sy = edges.source.y;
-    const tx = edges.target.x;
-    const ty = edges.target.y;
-    
-    // Calculate control point for quadratic bezier curve
-    const dx = tx - sx;
-    const dy = ty - sy;
-    const dr = Math.sqrt(dx * dx + dy * dy);
-    
-    // Offset perpendicular to the line
-    const offsetX = -dy / dr * offset;
-    const offsetY = dx / dr * offset;
-    
-    const mx = (sx + tx) / 2 + offsetX;
-    const my = (sy + ty) / 2 + offsetY;
-    
-    const pathString = `M ${sx} ${sy} Q ${mx} ${my} ${tx} ${ty}`;
+    const { sx, sy, mx, my, tx, ty, pathString } = computeSegmentGeometry(event, teamIndex);
     
     // Create glow effect first
     const glowPath = d3Data.pathGroup.append('path')
@@ -1650,14 +1802,14 @@ function drawAnimatedPath(event, teamColor, teamIndex) {
  * Toggle between static and animated path modes
  */
 function togglePathAnimation() {
-    if (pathAnimationState.isPlaying) {
+    if (pathAnimationState.sessionActive) {
         stopPathAnimation();
         // Show all paths at once (static mode)
         updateTeamPathsStatic();
-        updateAnimateButton('🎬 Animer');
+        updateAnimateButton('Animer');
     } else {
         startPathAnimation();
-        updateAnimateButton('⏹️ Arrêter');
+        updateAnimateButton('Arrêter');
     }
 }
 
@@ -1667,8 +1819,9 @@ function togglePathAnimation() {
 function updateAnimateButton(text) {
     const btn = document.getElementById('animate-btn');
     if (btn) {
-        btn.textContent = text;
-        btn.classList.toggle('active', pathAnimationState.isPlaying);
+        const active = pathAnimationState.sessionActive;
+        btn.innerHTML = (active ? D3_ICON_STOP : D3_ICON_PLAY) + '<span>' + text + '</span>';
+        btn.classList.toggle('active', active);
     }
 }
 
@@ -1789,7 +1942,7 @@ function hideTimeline() {
  * Show/hide animation controls
  */
 function showAnimationControls() {
-    document.getElementById('animation-controls').style.display = 'block';
+    document.getElementById('animation-controls').style.display = 'flex';
     // Set default speed active
     changeAnimationSpeed(1);
 }
@@ -1980,6 +2133,9 @@ window.togglePathAnimation = safeD3Operation(togglePathAnimation, 'toggle path a
 window.startPathAnimation = safeD3Operation(startPathAnimation, 'start path animation');
 window.stopPathAnimation = safeD3Operation(stopPathAnimation, 'stop path animation');
 window.changeAnimationSpeed = safeD3Operation(changeAnimationSpeed, 'change animation speed');
+window.togglePlayPause = safeD3Operation(togglePlayPause, 'toggle play/pause');
+window.stepAnimation = safeD3Operation(stepAnimation, 'step animation');
+window.refreshTeamPaths = safeD3Operation(refreshTeamPaths, 'refresh team paths');
 
 // Export d3Data for debugging
 window.d3Data = d3Data;
