@@ -2015,7 +2015,7 @@ async function authenticateWithCTFd(ctfdUrl, token) {
         const isAdmin = await loadUserPermissions();
         
         // Mettre à jour le statut de connexion
-        updateAPIStatus('connected', `${isAdmin ? 'Admin' : 'Joueur'}: ${currentUser.name}`);
+        updateAPIStatus('connected', 'Connecté');
         
         // 3. Vérifier l'état du CTF (seulement pour les admins)
         let ctfName = 'CTF';
@@ -4200,7 +4200,6 @@ function updateVisualization() {
         
         generateTeamFilters();
         updateGlobalStats();
-        updateLiveStats();
     } finally {
         // Reset flag after completion
         setTimeout(() => {
@@ -4234,40 +4233,6 @@ function updateGlobalStats() {
     }
 }
 
-function updateLiveStats() {
-    if (!userPermissions.canViewAllTeams) {
-        const progress = teamProgress[currentUser.teamName] || {};
-        const latestChallenge = Object.entries(progress)
-            .filter(([id, p]) => p.solved)
-            .sort(([,a], [,b]) => (b.timeSpent || 0) - (a.timeSpent || 0))[0];
-        
-        document.getElementById('live-stats').innerHTML = `
-            <div class="stat-item"><span>Votre équipe:</span><span>${currentUser.teamName}</span></div>
-            <div class="stat-item"><span>Dernier résolu:</span><span>${latestChallenge ? challengeMap[latestChallenge[0]]?.name.substring(0, 15) + '...' : 'Aucun'}</span></div>
-            <div class="stat-item"><span>Mode de vue:</span><span>${currentViewMode}</span></div>
-        `;
-    } else {
-        if (selectedTeams.length === 0) {
-            document.getElementById('live-stats').innerHTML = `
-                <div class="stat-item"><span>Aucune équipe sélectionnée</span><span>-</span></div>
-            `;
-            return;
-        }
-        
-        const leadingTeam = selectedTeams.reduce((leader, team) => {
-            const teamScore = getTeamSolvedCount(team);
-            const leaderScore = getTeamSolvedCount(leader);
-            return teamScore > leaderScore ? team : leader;
-        }, selectedTeams[0]);
-        
-        document.getElementById('live-stats').innerHTML = `
-            <div class="stat-item"><span>Équipe en tête:</span><span>${leadingTeam}</span></div>
-            <div class="stat-item"><span>Mode connecté:</span><span>Admin</span></div>
-            <div class="stat-item"><span>Mode de vue:</span><span>${currentViewMode}</span></div>
-        `;
-    }
-}
-
 function calculateTeamScore(teamName) {
     if (!teamProgress[teamName]) return 0;
     return Object.entries(teamProgress[teamName])
@@ -4275,7 +4240,7 @@ function calculateTeamScore(teamName) {
         .reduce((sum, [id, progress]) => sum + (challengeMap[id]?.points || 0), 0);
 }
 
-function updateAPIStatus(status, message) {
+function updateAPIStatus(status, message, targetUrl) {
     const indicator = document.getElementById('api-indicator');
     const text = document.getElementById('api-status-text');
     const urlDisplay = document.getElementById('ctfd-url-display');
@@ -4283,9 +4248,10 @@ function updateAPIStatus(status, message) {
     indicator.className = `status-indicator status-${status}`;
     text.textContent = message;
     
-    // Afficher l'URL du CTFd si connecté
-    if ((status === 'connected' || status === 'proxy') && currentUser.ctfdUrl && urlDisplay) {
-        urlDisplay.textContent = currentUser.ctfdUrl;
+    // Afficher l'URL du CTFd si connecté (ou la cible du proxy avant connexion)
+    const displayUrl = targetUrl || currentUser.ctfdUrl;
+    if ((status === 'connected' || status === 'proxy') && displayUrl && urlDisplay) {
+        urlDisplay.textContent = displayUrl;
         urlDisplay.style.display = 'block';
     } else if (urlDisplay) {
         urlDisplay.textContent = '';
@@ -4416,7 +4382,7 @@ function refreshData() {
             await loadUserPermissions();
             await loadDataBasedOnPermissions();
             updateVisualization();
-            updateAPIStatus('connected', `${userPermissions.isAdmin ? 'Admin' : 'Équipe'} connecté`);
+            updateAPIStatus('connected', 'Connecté');
         } catch (error) {
             console.error('Erreur actualisation:', error);
             updateAPIStatus('disconnected', 'Erreur d\'actualisation');
@@ -5688,7 +5654,7 @@ async function loadProxyConfig() {
         }
         
         // Afficher un indicateur que le proxy est actif
-        updateAPIStatus('proxy', `Proxy actif: ${config.ctfdUrl}`);
+        updateAPIStatus('proxy', 'Proxy actif', config.ctfdUrl);
         
     } catch (error) {
         // Ne pas traiter comme une erreur - mode direct disponible

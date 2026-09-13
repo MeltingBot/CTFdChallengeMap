@@ -1,5 +1,6 @@
 const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
+const http = require('http');
+const https = require('https');
 const path = require('path');
 const { URL } = require('url');
 
@@ -56,9 +57,8 @@ app.get('/:file', (req, res, next) => {
   res.sendFile(path.join(__dirname, req.params.file));
 });
 
-// URL CTFd courante + middleware proxy associé
+// URL CTFd courante
 let currentCtfdUrl = process.env.CTFD_URL || 'https://demo.ctfd.io';
-let currentProxyMiddleware;
 
 function validateCtfdUrl(raw) {
   if (typeof raw !== 'string' || raw.length === 0) return null;
@@ -72,29 +72,6 @@ function validateCtfdUrl(raw) {
   if (!parsed.host) return null;
   return parsed.origin + parsed.pathname.replace(/\/$/, '');
 }
-
-function createCurrentProxyMiddleware() {
-  currentProxyMiddleware = createProxyMiddleware({
-    target: currentCtfdUrl,
-    changeOrigin: true,
-    onProxyReq: (proxyReq, req, res) => {
-      debugLog('Proxying to:', currentCtfdUrl + req.url);
-      // Supprimer l'Origin (le mettre à "null" en string ne le supprime pas réellement)
-      proxyReq.removeHeader('origin');
-      if (req.headers.authorization) {
-        proxyReq.setHeader('Authorization', req.headers.authorization);
-      }
-    },
-    onError: (err, req, res) => {
-      console.error('Proxy error:', err.message);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Proxy error: ' + err.message });
-      }
-    }
-  });
-}
-
-createCurrentProxyMiddleware();
 
 app.get('/config', (req, res) => {
   res.json({ ctfdUrl: currentCtfdUrl });
@@ -115,14 +92,49 @@ app.post('/config', express.json(), (req, res) => {
     return res.status(400).json({ error: 'URL CTFd invalide (http(s) attendu)' });
   }
   currentCtfdUrl = validated;
-  createCurrentProxyMiddleware();
   console.log(`URL CTFd mise à jour: ${currentCtfdUrl}`);
   res.json({ success: true, ctfdUrl: currentCtfdUrl });
 });
 
-app.use('/api', (req, res, next) => {
-  debugLog('Using proxy for request to:', currentCtfdUrl + req.url);
-  currentProxyMiddleware(req, res, next);
+// Relais /api vers l'instance CTFd, en Node natif (http/https.request).
+// Équivalent de l'ancien http-proxy-middleware (changeOrigin, Origin supprimé,
+// Authorization transmise, corps streamé) sans dépendance — et sans le
+// DeprecationWarning util._extend émis par http-proxy sur Node ≥ 22.
+app.use('/api', (req, res) => {
+  const target = new URL(currentCtfdUrl);
+  const isHttps = target.protocol === 'https:';
+  const client = isHttps ? https : http;
+
+  // req.originalUrl conserve le préfixe /api ; on préserve un éventuel
+  // chemin de base sur l'URL cible (ex: https://hote/ctfd).
+  const basePath = target.pathname.replace(/\/$/, '');
+  const headers = { ...req.headers };
+  delete headers.origin;   // sinon CTFd rejette les requêtes cross-origin
+  headers.host = target.host; // changeOrigin
+
+  debugLog('Proxying to:', currentCtfdUrl + req.originalUrl);
+
+  const proxyReq = client.request({
+    hostname: target.hostname,
+    port: target.port || (isHttps ? 443 : 80),
+    method: req.method,
+    path: basePath + req.originalUrl,
+    headers
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error('Proxy error:', err.message);
+    if (!res.headersSent) {
+      res.status(502).json({ error: 'Proxy error: ' + err.message });
+    } else {
+      res.destroy();
+    }
+  });
+
+  req.pipe(proxyReq);
 });
 
 app.listen(PORT, HOST, () => {
